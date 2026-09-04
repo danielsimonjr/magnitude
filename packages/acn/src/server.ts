@@ -45,6 +45,8 @@ import {
   type AcnOwnerStoreError,
   type AcnOwnerStore,
   type ExactProcess,
+  acnRpcAuthorizationMatches,
+  loadOrCreateAcnRpcToken,
 } from "@magnitudedev/acn-protocol/coordination"
 import { BunSqliteDriverLayer } from "@magnitudedev/acn-protocol/coordination/bun"
 import { ProcessGroupControllerLive } from "@magnitudedev/acn-protocol/coordination/exact-process"
@@ -233,17 +235,33 @@ const boundedShutdownStep = (
   Effect.asVoid,
 )
 
+/**
+ * Coordination router origins. The desktop renderer loads from `file://`, which
+ * browsers report as the opaque `null` origin, so it is admitted here. That is
+ * safe only because every non-health route additionally requires the RPC
+ * bearer token, which an unrelated page cannot obtain.
+ */
 function isAllowedCorsOrigin(origin: string): boolean {
   return (
     LOCAL_HTTP_ORIGIN.test(origin) || origin === "file://" || origin === "null"
   )
 }
 
+/**
+ * Public inference router origins. Nothing legitimate calls the inference
+ * proxy from an opaque origin, and the proxy is unauthenticated, so opaque
+ * origins are rejected outright to stop cross-site abuse of local inference.
+ */
+function isAllowedPublicOrigin(origin: string): boolean {
+  return LOCAL_HTTP_ORIGIN.test(origin)
+}
+
 function corsHeadersFor(
-  request: HttpServerRequest.HttpServerRequest
+  request: HttpServerRequest.HttpServerRequest,
+  isAllowedOrigin: (origin: string) => boolean = isAllowedCorsOrigin,
 ): Record<string, string> | null {
   const origin = request.headers.origin
-  if (!origin || !isAllowedCorsOrigin(origin)) return null
+  if (!origin || !isAllowedOrigin(origin)) return null
 
   return {
     "access-control-allow-origin": origin,
@@ -257,9 +275,10 @@ function corsHeadersFor(
 
 function withCors(
   response: HttpServerResponse.HttpServerResponse,
-  request: HttpServerRequest.HttpServerRequest
+  request: HttpServerRequest.HttpServerRequest,
+  isAllowedOrigin: (origin: string) => boolean = isAllowedCorsOrigin,
 ) {
-  const headers = corsHeadersFor(request)
+  const headers = corsHeadersFor(request, isAllowedOrigin)
   return headers ? HttpServerResponse.setHeaders(response, headers) : response
 }
 
@@ -267,8 +286,11 @@ const disallowedCorsResponse = HttpServerResponse.empty({ status: 403 })
 const encodeHealthResponse = Schema.encode(AcnHealthResponseSchema)
 
 // OPTIONS preflight handler — catches all OPTIONS requests.
-const OptionsRouteHandler = (request: HttpServerRequest.HttpServerRequest) => {
-  const headers = corsHeadersFor(request)
+const OptionsRouteHandler = (
+  request: HttpServerRequest.HttpServerRequest,
+  isAllowedOrigin: (origin: string) => boolean = isAllowedCorsOrigin,
+) => {
+  const headers = corsHeadersFor(request, isAllowedOrigin)
   if (!headers) return Effect.succeed(disallowedCorsResponse)
   return Effect.succeed(
     HttpServerResponse.setHeaders(
@@ -694,6 +716,12 @@ export const launchAcnServer = (options: AcnServerOptions = {}) =>
     const debug = options.debug === true
     const parentBinding = yield* makeParentBinding(options.parentBound === true)
 
+    const rpcToken = yield* Effect.try({
+      try: () => loadOrCreateAcnRpcToken(dataDir),
+      catch: (cause) => new AcnBootstrapRejected({
+        reason: `Unable to read or create the RPC token: ${cause instanceof Error ? cause.message : String(cause)}`,
+      }),
+    })
     const ownerStore = yield* makeAcnOwnerStore(dataDir).pipe(
       Effect.provide(Layer.merge(BunFileSystem.layer, BunPath.layer)),
     )
@@ -737,13 +765,22 @@ export const launchAcnServer = (options: AcnServerOptions = {}) =>
     ))
     yield* router.add("POST", "/rpc", Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest
+      if (!acnRpcAuthorizationMatches(request.headers.authorization, rpcToken)) {
+        return HttpServerResponse.empty({ status: 401 })
+      }
       return request.headers["x-magnitude-acn-id"] === ACN_INSTANCE_ID
         ? yield* lifecycle.dispatchRpc
         : HttpServerResponse.empty({ status: 409 })
     }))
-    yield* router.add("POST", "/shutdown", lifecycle.beginStopping({ reason: "administrative" }).pipe(
-      Effect.as(HttpServerResponse.empty({ status: 202 })),
-    ))
+    yield* router.add("POST", "/shutdown", Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest
+      if (!acnRpcAuthorizationMatches(request.headers.authorization, rpcToken)) {
+        return HttpServerResponse.empty({ status: 401 })
+      }
+      return yield* lifecycle.beginStopping({ reason: "administrative" }).pipe(
+        Effect.as(HttpServerResponse.empty({ status: 202 })),
+      )
+    }))
     yield* server.serve(router.asHttpEffect()).pipe(Effect.provide(infrastructure))
 
     const expectedOwner = yield* rejectCoordinationFailure(ownerStore.current)
@@ -820,9 +857,13 @@ export const launchAcnServer = (options: AcnServerOptions = {}) =>
         if (host === undefined || !LOCAL_HTTP_HOST.test(host)) {
           return HttpServerResponse.text("Invalid Host header", { status: 421 })
         }
-        return withCors(yield* responseEffect, request)
+        const origin = request.headers.origin
+        if (origin !== undefined && !isAllowedPublicOrigin(origin)) {
+          return disallowedCorsResponse
+        }
+        return withCors(yield* responseEffect, request, isAllowedPublicOrigin)
       }))
-      yield* publicRouter.add("OPTIONS", "/*", OptionsRouteHandler)
+      yield* publicRouter.add("OPTIONS", "/*", (request) => OptionsRouteHandler(request, isAllowedPublicOrigin))
       yield* publicRouter.add("GET", "/health", lifecycle.state.pipe(
         Effect.flatMap((state) => encodeHealthResponse(makeHealthResponse(ACN_VERSION, state)).pipe(
           Effect.flatMap((body) => HttpServerResponse.json(body, {

@@ -22,10 +22,14 @@ import { join, resolve } from "node:path"
 const port = Number(process.env.INFERENCE_BENCHMARK_DASHBOARD_PORT ?? 4897)
 const workspace = resolve(import.meta.dir, "../../..")
 process.chdir(workspace)
+const uiPort = Number(process.env.INFERENCE_BENCHMARK_DASHBOARD_UI_PORT ?? 5187)
+const allowedOrigins = new Set([`http://127.0.0.1:${uiPort}`, `http://localhost:${uiPort}`])
+const localHost = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/
 const cors = {
-  "access-control-allow-origin": "*",
+  "access-control-allow-origin": `http://127.0.0.1:${uiPort}`,
   "access-control-allow-methods": "GET,POST,OPTIONS",
   "access-control-allow-headers": "content-type",
+  vary: "origin",
 }
 
 const runEffect = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
@@ -107,6 +111,13 @@ Bun.serve({
   hostname: "127.0.0.1",
   port,
   async fetch(request) {
+    // Loopback-only API that can spawn benchmark processes: refuse foreign hosts
+    // and any cross-site request. Same-origin traffic arrives through the Vite
+    // proxy without an Origin header.
+    const host = request.headers.get("host")
+    if (host === null || !localHost.test(host)) return new Response("Invalid Host header", { status: 421 })
+    const origin = request.headers.get("origin")
+    if (origin !== null && !allowedOrigins.has(origin)) return new Response("Forbidden", { status: 403 })
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors })
     try {
       const url = new URL(request.url)
@@ -142,6 +153,8 @@ Bun.serve({
           return detail?.result ? json(detail.result) : json({ error: "result not available" }, { status: 404 })
         }
         if (request.method === "POST" && parts[3] === "cancel") {
+          const known = await Effect.runPromise(listRuns())
+          if (!known.some((run) => run.id === id)) return json({ error: "run not found" }, { status: 404 })
           const manifest = JSON.parse(await readFile(join(runDirectory(id), "manifest.json"), "utf8")) as { pid?: unknown; runId?: unknown }
           const lock = JSON.parse(await readFile(activeRunLockPath(), "utf8")) as { pid?: unknown; runId?: unknown }
           if (manifest.runId !== id || lock.runId !== id || !Number.isSafeInteger(manifest.pid) || lock.pid !== manifest.pid) return json({ error: "run is not the active benchmark process" }, { status: 409 })

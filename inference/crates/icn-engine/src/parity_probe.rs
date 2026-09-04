@@ -1997,14 +1997,12 @@ fn sampler_bench_apply_once(
         ));
     }
 
-    // The safe sampler projection updates Vec's logical length to the native
-    // result size. The oracle restores the same allocation's logical size with
-    // an aggregate assignment before every call. All capacity slots were
-    // initialized at construction, LlamaTokenData is Copy, and top-k does not
-    // deallocate the caller-owned buffer, so restoring that length is sound and
-    // keeps the timed boundary to the oracle's O(1) reset + copy/apply/reset.
-    unsafe { result.data.set_len(source.len()) };
-    result.data.copy_from_slice(source);
+    // The safe sampler projection shrinks Vec's logical length to the native
+    // result size. Restore the source contents into the same allocation without
+    // touching uninitialised length: capacity was checked above, so this never
+    // reallocates and stays O(n) like the previous copy.
+    result.data.clear();
+    result.data.extend_from_slice(source);
     result.selected = None;
     result.sorted = false;
     sampler.apply(result);

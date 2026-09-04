@@ -199,7 +199,27 @@ export const IGNORED_TAGS = new Set([
   'object',
   'embed',
   'applet',
+  'template', // inert content, never rendered
 ]);
+
+/**
+ * Selectors for content that is not visible to a human reader. Hidden text is a
+ * common prompt-injection carrier (instructions aimed at an LLM reading the page
+ * rather than the person viewing it), so it is stripped before extraction.
+ */
+export const HIDDEN_CONTENT_SELECTORS: readonly string[] = [
+  '[hidden]',
+  '[aria-hidden="true"]',
+  'template',
+];
+
+/** True when an inline `style` attribute hides the element. */
+export function isHiddenByInlineStyle(style: string | undefined): boolean {
+  if (!style) return false;
+  const s = style.toLowerCase().replace(/\s+/g, '');
+  return /(^|;)display:none(!important)?(;|$)/.test(s) ||
+    /(^|;)visibility:hidden(!important)?(;|$)/.test(s);
+}
 
 // Tags that are typically navigation/UI elements
 export const NAVIGATION_TAGS = new Set([

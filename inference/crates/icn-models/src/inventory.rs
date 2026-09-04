@@ -293,7 +293,14 @@ impl ManagedModelStore {
             download_slots: Arc::new(tokio::sync::Semaphore::new(config.max_concurrent_downloads)),
             config,
             client,
-            http: reqwest::Client::new(),
+            // Hub metadata/search requests carry HF_TOKEN; never let a
+            // misconfigured HF_ENDPOINT downgrade them to cleartext or hang.
+            http: reqwest::Client::builder()
+                .https_only(true)
+                .connect_timeout(std::time::Duration::from_secs(20))
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .map_err(|error| InventoryError::Internal(error.to_string()))?,
             models: Arc::new(RwLock::new(BTreeMap::new())),
             operations: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             cache,

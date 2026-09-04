@@ -118,7 +118,9 @@ if (npmVersion) {
 if (process.env.MAGNITUDE_REQUIRE_RELEASE === "true" && action !== "release") {
   throw new Error("release state changed before publication")
 }
-if (action !== "complete") {
+// Only the publishing job carries npm credentials; the read-only preflight job
+// must not receive NPM_TOKEN at all, so the identity check runs there alone.
+if (process.env.MAGNITUDE_REQUIRE_RELEASE === "true") {
   required("NODE_AUTH_TOKEN")
   await run(["npm", "whoami", "--registry", "https://registry.npmjs.org"])
 }

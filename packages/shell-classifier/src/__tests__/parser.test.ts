@@ -315,7 +315,7 @@ describe('shell-parser', () => {
       const tokens = tokenize('cat file | grep pattern')
       expect(parse(tokens)).toEqual([
         { assignments: [], name: 'cat', args: ['file'], redirects: [] },
-        { assignments: [], name: 'grep', args: ['pattern'], redirects: [] },
+        { assignments: [], name: 'grep', args: ['pattern'], redirects: [], stdinPiped: true },
       ])
     })
 
@@ -425,8 +425,8 @@ describe('shell-parser', () => {
       const result = parseShellCommand('cat file.txt | grep pattern | sort')
       expect(result).toEqual([
         { assignments: [], name: 'cat', args: ['file.txt'], redirects: [] },
-        { assignments: [], name: 'grep', args: ['pattern'], redirects: [] },
-        { assignments: [], name: 'sort', args: [], redirects: [] },
+        { assignments: [], name: 'grep', args: ['pattern'], redirects: [], stdinPiped: true },
+        { assignments: [], name: 'sort', args: [], redirects: [], stdinPiped: true },
       ])
     })
 
@@ -485,7 +485,7 @@ describe('shell-parser', () => {
       const result = parseShellCommand('ls | tee /outside/out')
       expect(result).toEqual([
         { assignments: [], name: 'ls', args: [], redirects: [] },
-        { assignments: [], name: 'tee', args: ['/outside/out'], redirects: [] },
+        { assignments: [], name: 'tee', args: ['/outside/out'], redirects: [], stdinPiped: true },
       ])
     })
 
@@ -500,8 +500,8 @@ describe('shell-parser', () => {
       const result = parseShellCommand("find packages -maxdepth 2 -name package.json | sed 's#^./##' | sort")
       expect(result).toEqual([
         { assignments: [], name: 'find', args: ['packages', '-maxdepth', '2', '-name', 'package.json'], redirects: [] },
-        { assignments: [], name: 'sed', args: ['s#^./##'], redirects: [] },
-        { assignments: [], name: 'sort', args: [], redirects: [] },
+        { assignments: [], name: 'sed', args: ['s#^./##'], redirects: [], stdinPiped: true },
+        { assignments: [], name: 'sort', args: [], redirects: [], stdinPiped: true },
       ])
     })
 
@@ -580,5 +580,52 @@ describe('shell-parser', () => {
       expect(result.length).toBeGreaterThanOrEqual(1)
       expect(result[0].name).toBe('cmd')
     })
+  })
+})
+
+describe('shell-parser security regressions', () => {
+  test('>| (noclobber override) tokenizes as a plain > redirect with its target', () => {
+    expect(tokenize('echo x >| /etc/passwd')).toEqual([
+      { type: 'Word', value: 'echo' },
+      { type: 'Word', value: 'x' },
+      { type: 'Redirect', op: '>' },
+      { type: 'Word', value: '/etc/passwd' },
+    ])
+    expect(parseShellCommand('echo x >| /etc/passwd')[0].redirects).toEqual([{ op: '>', target: '/etc/passwd' }])
+  })
+
+  test('brace group { ...; } splits into separate commands', () => {
+    expect(parseShellCommand('{ git push; }')).toEqual([
+      { assignments: [], name: 'git', args: ['push'], redirects: [] },
+    ])
+    expect(parseShellCommand('{ ls; cat f; }').map(c => c.name)).toEqual(['ls', 'cat'])
+  })
+
+  test('braces that are part of a word stay in the word ({} and brace expansion)', () => {
+    expect(parseShellCommand('find . -exec rm {} \\;')[0].args).toEqual(['.', '-exec', 'rm', '{}', ';'])
+    expect(parseShellCommand('echo {a,b}')[0].args).toEqual(['{a,b}'])
+    expect(parseShellCommand("awk '{print $1}'")[0].args).toEqual(['{print $1}'])
+  })
+
+  test('reserved words in command position act as separators', () => {
+    expect(parseShellCommand('if true; then git push; fi').map(c => [c.name, ...c.args])).toEqual([
+      ['true'], ['git', 'push'],
+    ])
+    expect(parseShellCommand('while true; do git push; done').map(c => c.name)).toEqual(['true', 'git'])
+    expect(parseShellCommand('for f in *; do git add $f; done').map(c => c.name)).toEqual(['for', 'git'])
+    expect(parseShellCommand('! git push')[0].name).toBe('git')
+  })
+
+  test('reserved words as arguments or when quoted are ordinary words', () => {
+    expect(parseShellCommand('echo done then fi')[0].args).toEqual(['done', 'then', 'fi'])
+    expect(parseShellCommand("'then' x")[0].name).toBe('then')
+    expect(parseShellCommand('do\\ne')[0].name).toBe('done')
+  })
+
+  test('commands fed by a pipe are marked stdinPiped', () => {
+    const cmds = parseShellCommand('echo "rm -rf /" | sh')
+    expect(cmds[0].stdinPiped).toBeUndefined()
+    expect(cmds[1].stdinPiped).toBe(true)
+    expect(parseShellCommand('ls && sh')[1].stdinPiped).toBeUndefined()
   })
 })

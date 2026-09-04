@@ -20,6 +20,7 @@ interface TestEndpoint {
   readonly id: ReturnType<typeof AcnInstanceIdSchema.make>
   readonly version: string
   readonly url: string
+  readonly rpcToken: string
 }
 
 const { RpcClientError: TransportError } = RpcClientError
@@ -123,6 +124,7 @@ const makeFakeEndpointAccess = (options: {
     id: AcnInstanceIdSchema.make(id),
     version: "1.0.0",
     url,
+    rpcToken: "test-token",
   })
   const readCurrent = () => Effect.sync(() => {
     const result = options.current[Math.min(currentCalls, options.current.length - 1)]

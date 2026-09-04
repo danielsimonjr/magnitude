@@ -1542,7 +1542,12 @@ async fn hub_api_metadata(
                 resumable: false,
             }
         })?;
-    let http = reqwest::Client::builder().build().map_err(download_io)?;
+    let http = reqwest::Client::builder()
+        .https_only(true)
+        .connect_timeout(std::time::Duration::from_secs(20))
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(download_io)?;
     let mut request = http.get(url).query(&[("blobs", "true")]);
     if let Some(token) = std::env::var_os("HF_TOKEN").and_then(|value| value.into_string().ok()) {
         request = request.bearer_auth(token);

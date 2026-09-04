@@ -1,5 +1,5 @@
 import { definePrompt } from '../prompt'
-import { denyForbiddenCommands, denyMutatingGit, denyWritesOutside, denyMassDestructiveIn, allowAll } from '../policy'
+import { denyForbiddenCommands, denyMutatingGit, denyWritesOutside, denyWritesToProtectedPaths, denyMassDestructiveIn, allowAll } from '../policy'
 import type { RoleDefinition } from '../types'
 import artisanPromptRaw from '../prompts/artisan.txt' with { type: 'text' }
 import { homedir } from 'node:os'
@@ -17,7 +17,8 @@ export function createArtisanRole(): RoleDefinition {
     policy: [
       denyForbiddenCommands(),
       denyMutatingGit(),
-      denyWritesOutside(ctx => [ctx.cwd, ctx.scratchpadPath, join(homedir(), '.magnitude')]),
+      denyWritesToProtectedPaths(),
+      denyWritesOutside(ctx => [ctx.cwd, ctx.scratchpadPath]),
       denyMassDestructiveIn(ctx => [join(homedir(), '.magnitude')]),
       allowAll(),
     ],

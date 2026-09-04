@@ -12,6 +12,7 @@ import { ContextImageResultSchema } from '../content'
 import { expandScratchpadPath } from '@magnitudedev/scratchpad'
 import { Fs, resolveFsPath } from '../services/fs'
 import { ToolErrorSchema } from './errors'
+import { escapesViaSymlink, isPhysicallyWithin, touchesProtectedPath, magnitudeProtectedPaths } from '@magnitudedev/roles'
 
 // =============================================================================
 // Errors
@@ -24,6 +25,38 @@ function fsError(message: string): FsError {
 }
 
 const FsErrorSchema = ToolErrorSchema('FsError', {})
+
+// =============================================================================
+// Write confinement (mirrors the roles policy gate; see @magnitudedev/roles path-confinement)
+// =============================================================================
+
+/**
+ * Deny a write whose physical destination escapes the allowed roots through a
+ * symlink, or lands on a host-trusted `~/.magnitude` path. Lexically-outside
+ * writes are left to the policy gate (which honours disableCwdSafeguards).
+ */
+function checkWriteConfinement(fullPath: string, roots: readonly string[]): Effect.Effect<void, FsError> {
+  return Effect.try({
+    try: () => {
+      if (touchesProtectedPath(fullPath, magnitudeProtectedPaths())) {
+        throw new Error('Cannot write to protected Magnitude paths')
+      }
+      if (escapesViaSymlink(fullPath, [...roots, '/tmp'])) {
+        throw new Error('Cannot write files outside allowed directories (symlink escapes allowed roots)')
+      }
+    },
+    catch: (e) => fsError(e instanceof Error ? e.message : String(e)),
+  })
+}
+
+/** True when `fullPath` is physically inside one of `roots`; never throws. */
+function isConfinedForPreview(fullPath: string, roots: readonly string[]): boolean {
+  try {
+    return isPhysicallyWithin(fullPath, roots) && !touchesProtectedPath(fullPath, magnitudeProtectedPaths())
+  } catch {
+    return false
+  }
+}
 
 // =============================================================================
 // fs.read()
@@ -127,6 +160,7 @@ export const writeTool = defineHarnessTool({
     const fs = yield* Fs
     const { path: expandedPath } = expandScratchpadPath(path, scratchpadPath)
     const fullPath = resolve(cwd, expandedPath)
+    yield* checkWriteConfinement(fullPath, [cwd, scratchpadPath])
     yield* fs.writeFile(fullPath, content).pipe(
       Effect.mapError(() => fsError(`Failed to write ${path}`))
     )
@@ -178,6 +212,12 @@ export const editTool = defineHarnessTool({
         const { path: expandedPath } = expandScratchpadPath(path.value, scratchpadPath)
         const fullPath = resolve(cwd, expandedPath)
 
+        // The policy gate has not run yet at this point: never read or emit
+        // file contents for a path outside the allowed roots.
+        if (!isConfinedForPreview(fullPath, [cwd, scratchpadPath])) {
+          return { emitted: true }
+        }
+
         const exists = yield* fs.exists(fullPath).pipe(Effect.catchAll(() => Effect.succeed(false)))
         if (!exists) {
           return yield* new StreamValidationError({
@@ -199,6 +239,7 @@ export const editTool = defineHarnessTool({
         const fs = yield* Fs
         const { path: expandedPath } = expandScratchpadPath(path.value, scratchpadPath)
         const fullPath = resolve(cwd, expandedPath)
+        if (!isConfinedForPreview(fullPath, [cwd, scratchpadPath])) return state
         const content = yield* fs.readText(fullPath).pipe(Effect.catchAll(() => Effect.succeed('')))
 
         if (!content.includes(input.old.value)) {
@@ -216,6 +257,7 @@ export const editTool = defineHarnessTool({
     const fs = yield* Fs
     const { path: expandedPath } = expandScratchpadPath(path, scratchpadPath)
     const fullPath = resolve(cwd, expandedPath)
+    yield* checkWriteConfinement(fullPath, [cwd, scratchpadPath])
 
     const content = yield* fs.readText(fullPath).pipe(
       Effect.mapError(() => fsError(`Failed to read ${path}`))

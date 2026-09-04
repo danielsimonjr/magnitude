@@ -8,6 +8,7 @@ import {
   type AcnOwnerStoreError,
   type ProcessGroup,
   type ProcessGroupController,
+  acnRpcAuthorizationHeader,
 } from "@magnitudedev/acn-protocol/coordination"
 import { Context, Duration, Effect, Option, Schema } from "effect"
 import {
@@ -68,6 +69,7 @@ export const makeAcnDaemonShutdownSupervisor = (
   owners: AcnOwnerStore,
   processes: ProcessGroupController,
   http: HttpClient.HttpClient,
+  rpcToken: string,
 ): Effect.Effect<AcnDaemonShutdownSupervisor> => Effect.gen(function* () {
   const lock = yield* Effect.makeSemaphore(1)
 
@@ -104,7 +106,9 @@ export const makeAcnDaemonShutdownSupervisor = (
       if (beforeGraceful._tag === "Superseded") return superseded(beforeGraceful.cause)
 
       if (beforeGraceful._tag === "LeaderLive") {
-        yield* http.execute(HttpClientRequest.post(`http://127.0.0.1:${expected.port}/shutdown`)).pipe(
+        yield* http.execute(HttpClientRequest.post(`http://127.0.0.1:${expected.port}/shutdown`, {
+          headers: acnRpcAuthorizationHeader(rpcToken),
+        })).pipe(
           Effect.timeout(GRACEFUL_REQUEST_TIMEOUT),
           Effect.ignore,
         )

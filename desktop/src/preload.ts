@@ -11,6 +11,10 @@ import {
   clipboard as electronClipboard,
   shell,
 } from "electron"
+import * as nodePath from "node:path"
+
+/** Only web and mail links may leave the app through the OS handler. */
+const ALLOWED_EXTERNAL_URL = /^(?:https?:|mailto:)/i
 import { RpcClient } from "@effect/rpc"
 import {
   Cause,
@@ -175,12 +179,16 @@ function makeDesktopApi(): DesktopApi {
         })
     },
     async openPath(path: string): Promise<void> {
-      await shell.openPath(path)
+      // Opening an arbitrary file runs its default handler (scripts, installers).
+      // The renderer only ever needs to reveal files, so refuse to launch them.
+      throw new Error(`Refusing to open path with its default handler: ${path}`)
     },
     async openExternal(url: string): Promise<void> {
+      if (!ALLOWED_EXTERNAL_URL.test(url)) throw new Error("Refusing to open non-http(s) URL")
       await shell.openExternal(url)
     },
     showItemInFolder(path: string): void {
+      if (!nodePath.isAbsolute(path) || path.includes("\0")) return
       shell.showItemInFolder(path)
     },
     storage: {

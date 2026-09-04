@@ -1,6 +1,7 @@
 import { mkdir, rm } from 'node:fs/promises'
 import { join, basename } from 'node:path'
 import { getTarget, getVersion } from './platform'
+import { expectedSha256, sha256Hex } from './checksums'
 
 const REPO = 'microsoft/ripgrep-prebuilt'
 
@@ -43,17 +44,22 @@ export async function downloadRg(destDir: string, targetOverride?: string): Prom
   const assetName = `ripgrep-${version}-${target}${ext}`
   const binName = isWin ? 'rg.exe' : 'rg'
   const binPath = join(destDir, binName)
-  const token = process.env.GITHUB_TOKEN
+  // Resolve the pinned digest before any network activity so unknown assets fail fast.
+  const expectedDigest = expectedSha256(assetName)
 
   // Use direct download URL instead of GitHub API to avoid unreliable API (504s, rate limits).
   // The naming convention is predictable: github.com/{repo}/releases/download/{tag}/{assetName}
   const directUrl = `https://github.com/${REPO}/releases/download/${version}/${assetName}`
 
-  const dlHeaders: Record<string, string> = { Accept: 'application/octet-stream' }
-  if (token) dlHeaders.Authorization = `token ${token}`
-
-  const dlRes = await fetchWithRetry(directUrl, { headers: dlHeaders })
+  // Public repository: no credentials are sent (a GITHUB_TOKEN would be needlessly exposed).
+  const dlRes = await fetchWithRetry(directUrl, { headers: { Accept: 'application/octet-stream' } })
   const bytes = new Uint8Array(await dlRes.arrayBuffer())
+  const actualDigest = sha256Hex(bytes)
+  if (actualDigest !== expectedDigest) {
+    throw new Error(
+      `[ripgrep] SHA-256 mismatch for ${assetName}: expected ${expectedDigest}, got ${actualDigest}. Refusing to install.`
+    )
+  }
   const tmpFile = join(destDir, `${assetName}.tmp`)
 
   try {

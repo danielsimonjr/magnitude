@@ -23,6 +23,8 @@ export const AcnInstanceFields = {
   id: AcnInstanceIdSchema,
   identity: AcnIdentitySchema,
   url: Schema.NonEmptyString,
+  /** Bearer token required by the instance's `/rpc` and `/shutdown` routes. */
+  rpcToken: Schema.NonEmptyString,
   pid: PositiveSafeInteger,
   processStartIdentity: ProcessStartIdentitySchema,
 } as const
@@ -32,6 +34,7 @@ export interface AcnInstance<State extends AcnHealthState = AcnHealthState> {
   readonly id: typeof AcnInstanceIdSchema.Type
   readonly identity: typeof AcnIdentitySchema.Type
   readonly url: string
+  readonly rpcToken: string
   readonly pid: number
   readonly processStartIdentity: typeof ProcessStartIdentitySchema.Type
   readonly lifecycle: State

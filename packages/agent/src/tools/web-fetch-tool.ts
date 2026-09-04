@@ -8,6 +8,7 @@ import { Effect, Schedule, Schema } from 'effect'
 import { defineHarnessTool } from '@magnitudedev/harness'
 import { extractHtml } from '@magnitudedev/dom-extract'
 import { ToolErrorSchema } from './errors'
+import { guardedFetch, readBodyCapped } from './web-fetch-guard'
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5 MiB
 const TIMEOUT_MS = 30_000
@@ -29,30 +30,24 @@ const fetchPage = (url: string) =>
       const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
       try {
-        const response = await fetch(url, {
+        // guardedFetch validates every hop (scheme, DNS-resolved addresses, metadata hosts)
+        // and follows at most MAX_REDIRECT_HOPS redirects manually.
+        const { response, url: finalUrl } = await guardedFetch(url, {
           signal: controller.signal,
           headers: { 'User-Agent': USER_AGENT, 'Accept': ACCEPT, 'Accept-Language': ACCEPT_LANG },
-          redirect: 'follow',
         })
 
         if (!response.ok) {
+          await response.body?.cancel().catch(() => {})
           throw new Error(`HTTP ${response.status} ${response.statusText}`)
         }
 
-        const contentLength = response.headers.get('content-length')
-        if (contentLength && parseInt(contentLength) > MAX_RESPONSE_SIZE) {
-          throw new Error('Response too large (exceeds 5 MiB limit)')
-        }
-
-        const raw = await response.text()
-        if (raw.length > MAX_RESPONSE_SIZE) {
-          throw new Error('Response too large (exceeds 5 MiB limit)')
-        }
+        const raw = await readBodyCapped(response, MAX_RESPONSE_SIZE)
 
         const contentType = response.headers.get('content-type') || ''
         const content = contentType.includes('text/html') ? extractHtml(raw) : raw
 
-        return { url: response.url || url, content }
+        return { url: finalUrl, content }
       } finally {
         clearTimeout(timeout)
       }
@@ -62,6 +57,9 @@ const fetchPage = (url: string) =>
       message: e instanceof Error ? e.message : String(e),
     }),
   })
+
+// Do not retry requests rejected by the SSRF guard — the answer will not change.
+const isRetryable = (e: { message: string }) => !e.message.startsWith('Refusing to fetch') && !e.message.includes('not allowed')
 
 export const webFetchTool = defineHarnessTool({
   definition: {
@@ -84,6 +82,6 @@ export const webFetchTool = defineHarnessTool({
       })
     }
 
-    return fetchPage(url).pipe(Effect.retry(retryPolicy))
+    return fetchPage(url).pipe(Effect.retry({ schedule: retryPolicy, while: isRetryable }))
   },
 })

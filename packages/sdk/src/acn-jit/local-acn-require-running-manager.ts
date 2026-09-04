@@ -6,6 +6,7 @@ import {
   ProcessGroupController,
   SqliteDriver,
   makeAcnOwnerStore,
+  loadOrCreateAcnRpcToken,
 } from "@magnitudedev/acn-protocol/coordination"
 import { ProcessGroupControllerLive } from "@magnitudedev/acn-protocol/coordination/exact-process"
 import { Duration, Effect, Option, Stream } from "effect"
@@ -142,8 +143,9 @@ const makeLocalObservedAcnInstanceManager = (
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.provideService(Path.Path, path),
   )
+  const rpcToken = loadOrCreateAcnRpcToken(options.dataDir ?? defaultDataDir())
   return makeObservedAcnInstanceManager(
-    makeAcnOwnerObserver(owners, processes, http),
+    makeAcnOwnerObserver(owners, processes, http, rpcToken),
     absentOwner,
   )
 }).pipe(Effect.provideService(ProcessGroupController, ProcessGroupControllerLive))

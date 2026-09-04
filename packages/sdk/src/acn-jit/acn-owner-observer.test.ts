@@ -131,7 +131,7 @@ const observeSteps = (
     attempts += 1
     return step(request)
   }))
-  const fiber = yield* makeAcnOwnerObserver(owners, processes, http).observe.pipe(Effect.fork)
+  const fiber = yield* makeAcnOwnerObserver(owners, processes, http, "test-token").observe.pipe(Effect.fork)
   for (let index = 0; index < clockAdjustments; index += 1) {
     yield* Effect.yieldNow()
     yield* TestClock.adjust(Duration.seconds(2))

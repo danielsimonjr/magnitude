@@ -38,7 +38,16 @@ export interface SimpleCommand {
   name: string | null
   args: string[]
   redirects: Redirect[]
+  /** Set when the command's stdin is fed by a preceding pipe. */
+  stdinPiped?: boolean
 }
+
+/**
+ * Shell reserved words that, in command position, are control-flow keywords
+ * rather than commands. Treated as separators so the command that follows
+ * them (e.g. `if true; then git push; fi`) is classified on its own.
+ */
+const RESERVED_WORDS = new Set(['if', 'then', 'else', 'elif', 'fi', 'while', 'until', 'do', 'done', '!'])
 
 // ─── Tokenizer ───────────────────────────────────────────────
 
@@ -46,6 +55,7 @@ export function tokenize(input: string): Token[] {
   const tokens: Token[] = []
   const len = input.length
   let word = ''
+  let wordQuoted = false
   let i = 0
 
   // Top-level quoting state
@@ -65,11 +75,27 @@ export function tokenize(input: string): Token[] {
   // Subshell (bare parens) depth
   let parenDepth = 0
 
+  function atCommandPosition(): boolean {
+    const last = tokens[tokens.length - 1]
+    return !last || isSeparator(last)
+  }
+
   function flush() {
     if (word.length > 0) {
-      tokens.push({ type: 'Word', value: word })
+      if (!wordQuoted && RESERVED_WORDS.has(word) && atCommandPosition()) {
+        tokens.push({ type: 'Semi' })
+      } else {
+        tokens.push({ type: 'Word', value: word })
+      }
       word = ''
     }
+    wordQuoted = false
+  }
+
+  function isWordBoundary(idx: number): boolean {
+    if (idx >= len) return true
+    const c = input[idx]
+    return c === ' ' || c === '\t' || c === '\n' || c === ';' || c === '|' || c === '&' || c === ')'
   }
 
   while (i < len) {
@@ -78,6 +104,7 @@ export function tokenize(input: string): Token[] {
     // ── Escape (top level) ──────────────────────
     if (escaped) {
       word += ch
+      wordQuoted = true
       escaped = false
       i++
       continue
@@ -128,6 +155,7 @@ export function tokenize(input: string): Token[] {
 
     // ── Single-quote mode ───────────────────────
     if (singleQ) {
+      wordQuoted = true
       if (ch === "'") {
         singleQ = false
       } else {
@@ -139,6 +167,7 @@ export function tokenize(input: string): Token[] {
 
     // ── Double-quote mode ───────────────────────
     if (doubleQ) {
+      wordQuoted = true
       if (ch === '\\') {
         escaped = true
         i++
@@ -181,16 +210,19 @@ export function tokenize(input: string): Token[] {
     // Quote starts
     if (ch === "'") {
       singleQ = true
+      wordQuoted = true
       i++
       continue
     }
     if (ch === '"') {
       doubleQ = true
+      wordQuoted = true
       i++
       continue
     }
     if (ch === '`') {
       word += ch
+      wordQuoted = true
       backtick = true
       i++
       continue
@@ -199,6 +231,7 @@ export function tokenize(input: string): Token[] {
     // $() start
     if (ch === '$' && i + 1 < len && input[i + 1] === '(') {
       word += '$('
+      wordQuoted = true
       subDepth = 1
       subSingleQ = false
       subDoubleQ = false
@@ -278,10 +311,26 @@ export function tokenize(input: string): Token[] {
         // >> or 2>> (both are append writes, map 2>> to >>)
         tokens.push({ type: 'Redirect', op: '>>' })
         i += 2
+      } else if (i + 1 < len && input[i + 1] === '|') {
+        // >| (noclobber override) is a plain truncating write
+        tokens.push({ type: 'Redirect', op: isFd2 ? '2>' : '>' })
+        i += 2
       } else {
         tokens.push({ type: 'Redirect', op: isFd2 ? '2>' : '>' })
         i++
       }
+      continue
+    }
+
+    // Brace group `{ ...; }` — braces at word boundaries are separators
+    if (ch === '{' && word.length === 0 && isWordBoundary(i + 1)) {
+      tokens.push({ type: 'Semi' })
+      i++
+      continue
+    }
+    if (ch === '}' && word.length === 0 && isWordBoundary(i + 1)) {
+      tokens.push({ type: 'Semi' })
+      i++
       continue
     }
 
@@ -322,7 +371,9 @@ export function parse(tokens: Token[]): SimpleCommand[] {
     if (i === tokens.length || isSeparator(tokens[i])) {
       if (i > start) {
         const segment = tokens.slice(start, i)
-        commands.push(parseSegment(segment))
+        const cmd = parseSegment(segment)
+        if (start > 0 && tokens[start - 1]?.type === 'Pipe') cmd.stdinPiped = true
+        commands.push(cmd)
       }
       start = i + 1
     }
@@ -381,7 +432,7 @@ function parseSegment(tokens: Token[]): SimpleCommand {
   return { assignments, name, args, redirects }
 }
 
-function isAssignment(word: string): boolean {
+export function isAssignment(word: string): boolean {
   const eq = word.indexOf('=')
   if (eq <= 0) return false
   for (let j = 0; j < eq; j++) {

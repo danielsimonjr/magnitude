@@ -46,6 +46,7 @@ const ready: ReadyInstance = {
   id: AcnInstanceIdSchema.make("ready-acn"),
   identity: SDK_VERSION,
   url: "http://ready-acn",
+  rpcToken: "test-token",
   pid: 123,
   processStartIdentity: ProcessStartIdentitySchema.make("ready-process"),
   lifecycle: new AcnReady({}),

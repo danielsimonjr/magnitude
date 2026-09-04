@@ -43,8 +43,11 @@ export function makeConfigStorage(): Effect.Effect<
     const writeConfigUnlocked = (
       config: MagnitudeConfig
     ): Effect.Effect<void, PlatformError | JsonError> =>
+      // config.json may carry literal credentials (custom-endpoint headers), so it is
+      // owner-only like auth.json rather than inheriting the process umask.
       writeStructuredFileAtomic(g.configFile, MagnitudeConfigSchema, config, {
         parseOptions: { onExcessProperty: "preserve" },
+        mode: 0o600,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.mapError((error) =>
@@ -64,7 +67,7 @@ export function makeConfigStorage(): Effect.Effect<
     ): Effect.Effect<string, PlatformError> =>
       Effect.gen(function* () {
         const backupPath = corruptBackupPath();
-        yield* writeTextFileAtomic(backupPath, originalText).pipe(
+        yield* writeTextFileAtomic(backupPath, originalText, { mode: 0o600 }).pipe(
           Effect.provideService(FileSystem.FileSystem, fs)
         );
         return backupPath;

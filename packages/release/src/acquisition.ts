@@ -47,10 +47,35 @@ const failure = (
   transient = false
 ) => new ReleaseAcquisitionError({ stage, message, transient })
 
-export const releaseBaseUrl = (): string => (
-  process.env.MAGNITUDE_RELEASE_BASE_URL ??
-  "https://github.com/magnitudedev/magnitude/releases/download"
-).replace(/\/+$/, "")
+const DEFAULT_RELEASE_BASE_URL = "https://github.com/magnitudedev/magnitude/releases/download"
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"])
+
+/**
+ * Release artifacts are downloaded and executed, so the base URL override may
+ * only point at HTTPS, or at plain HTTP on loopback for local distribution tests.
+ * Anything else would let an on-path attacker substitute the binaries.
+ */
+const validateReleaseBaseUrl = (candidate: string): string => {
+  let url: URL
+  try {
+    url = new URL(candidate)
+  } catch {
+    throw new Error(`MAGNITUDE_RELEASE_BASE_URL is not a valid URL: ${candidate}`)
+  }
+  const loopbackHttp = url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)
+  if (url.protocol !== "https:" && !loopbackHttp) {
+    throw new Error(
+      `MAGNITUDE_RELEASE_BASE_URL must use https (or http on loopback for local testing): ${candidate}`
+    )
+  }
+  return candidate
+}
+
+export const releaseBaseUrl = (): string => {
+  const override = process.env.MAGNITUDE_RELEASE_BASE_URL
+  return (override === undefined ? DEFAULT_RELEASE_BASE_URL : validateReleaseBaseUrl(override))
+    .replace(/\/+$/, "")
+}
 
 export const releaseUrl = (
   baseUrl: string,
