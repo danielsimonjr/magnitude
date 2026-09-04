@@ -6,6 +6,7 @@ import {
   AcnVersionRegistryJson,
   type AcnRegistration,
 } from '@magnitudedev/acn-protocol'
+import { acnRpcAuthorizationHeader, loadOrCreateAcnRpcToken } from '@magnitudedev/acn-protocol/coordination'
 import type { AcnInfo, KillAllAcnResult, RpcTraceSummary } from './lib/types'
 
 const PORT = Number(process.env.ACN_DASH_API_PORT ?? 4886)
@@ -62,11 +63,21 @@ async function removeStaleRegistration(registryPath: string): Promise<void> {
   await rm(dirname(registryPath), { recursive: false }).catch(() => undefined)
 }
 
+// Introspection routes require the daemon's RPC bearer token; the dashboard runs as the
+// same user, so it reads the token from the data directory and attaches it.
+const rpcAuthorization = (): Record<string, string> => {
+  try {
+    return acnRpcAuthorizationHeader(loadOrCreateAcnRpcToken(DATA_DIR))
+  } catch {
+    return {}
+  }
+}
+
 async function fetchJson(url: string, timeoutMs = 800): Promise<unknown> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetch(url, { signal: controller.signal })
+    const response = await fetch(url, { signal: controller.signal, headers: rpcAuthorization() })
     if (!response.ok) {
       throw new Error(`${response.status} ${response.statusText}`)
     }
@@ -267,7 +278,7 @@ async function proxyJson(version: string, suffix: string): Promise<Response> {
     }, { status: 404 })
   }
 
-  const response = await fetch(upstreamUrl(acn, suffix))
+  const response = await fetch(upstreamUrl(acn, suffix), { headers: rpcAuthorization() })
   const body = await response.text()
   return new Response(body, {
     status: response.status,
@@ -289,7 +300,7 @@ async function proxyStream(version: string, suffix: string): Promise<Response> {
     }, { status: 404 })
   }
 
-  const response = await fetch(upstreamUrl(acn, suffix))
+  const response = await fetch(upstreamUrl(acn, suffix), { headers: rpcAuthorization() })
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
