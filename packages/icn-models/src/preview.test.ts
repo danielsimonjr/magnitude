@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest"
+import { Option } from "effect"
 import {
   hubModelToSnapshot,
   hubSearchModelToContract,
+  resolveHuggingFaceRepository,
+  searchHuggingFaceModels,
   selectRepositorySnapshotComponents,
   validateSnapshotRevision,
   validHubRevision,
@@ -70,7 +73,57 @@ describe("preview", () => {
     expect(selected[1]?.shard_index).toBe(2)
   })
 
-  // Skipped: network-backed preview and hub fetch integration tests require live Hugging Face access.
+  it("search_and_resolve_use_injectable_fetch", async () => {
+    const commit = "a".repeat(40)
+    const fetchMock: typeof fetch = async (input) => {
+      const url = String(input)
+      if (url.includes("/api/models?")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "owner/model-gguf",
+              sha: commit,
+              downloads: 9,
+              likes: 1,
+              gated: false,
+              private: false,
+              tags: ["gguf"],
+            },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )
+      }
+      if (url.includes("/api/models/owner/model-gguf/revision/")) {
+        return new Response(
+          JSON.stringify({
+            id: "owner/model-gguf",
+            sha: commit,
+            siblings: [
+              {
+                rfilename: "model.gguf",
+                size: 42,
+                lfs: { sha256: "b".repeat(64), size: 42 },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )
+      }
+      return new Response("not found", { status: 404 })
+    }
+
+    const search = await searchHuggingFaceModels({ query: "model", limit: 5 }, { fetch: fetchMock })
+    expect(search.models).toHaveLength(1)
+    expect(search.models[0]?.repository).toBe("owner/model-gguf")
+    expect(Option.getOrNull(search.models[0]!.downloads)).toBe(9n)
+
+    const resolved = await resolveHuggingFaceRepository(
+      { repository: "owner/model-gguf", revision: "main" },
+      { fetch: fetchMock },
+    )
+    expect(resolved.commit).toBe(commit)
+    expect(resolved.gguf_files).toHaveLength(1)
+  })
 })
 
 describe("preview hub snapshot parsing", () => {

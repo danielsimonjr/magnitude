@@ -1,14 +1,25 @@
 import { Option } from "effect"
 import {
   contentIdentity,
+  InventoryError,
   type ComponentRole,
   type ContentIdentity,
+  type HuggingFaceModelSearchRequest,
   type HuggingFaceModelSearchResult,
+  type HuggingFaceModelSearchResults,
+  type HuggingFaceRepositoryRequest,
   type HuggingFaceRepositorySnapshot,
-  type InventoryError,
+  type InventoryError as InventoryErrorType,
   type ModelPreviewSource,
 } from "@magnitudedev/icn-contracts"
-import { requireRequestedRevision } from "./hugging-face"
+import {
+  DEFAULT_HF_ENDPOINT,
+  MAX_HUB_SEARCH_QUERY_BYTES,
+  MAX_HUB_SEARCH_RESULTS,
+  hubSearchUrl,
+  requireRequestedRevision,
+  revisionMetadataUrl,
+} from "./hugging-face"
 
 export interface PreparedPreviewHeader {
   path: string
@@ -50,6 +61,14 @@ interface HubSearchModel {
 interface HubModel extends HubSearchModel {
   cardData?: unknown
   siblings?: HubSibling[]
+}
+
+export type FetchLike = typeof globalThis.fetch
+
+export interface HuggingFaceHubOptions {
+  readonly endpoint?: string
+  readonly fetch?: FetchLike
+  readonly token?: string
 }
 
 export const validRepository = (repository: string): boolean => {
@@ -182,6 +201,94 @@ export const selectRepositorySnapshotComponents = (
   })
 }
 
+const hubAuthHeaders = (token: string | undefined): Record<string, string> => {
+  if (token === undefined || token.length === 0) {
+    return { Accept: "application/json" }
+  }
+  return { Accept: "application/json", Authorization: `Bearer ${token}` }
+}
+
+const validateSearchRequest = (request: HuggingFaceModelSearchRequest): void => {
+  const query = request.query.trim()
+  if (
+    query.length === 0 ||
+    query.length > MAX_HUB_SEARCH_QUERY_BYTES ||
+    request.limit === 0 ||
+    request.limit > MAX_HUB_SEARCH_RESULTS
+  ) {
+    throw InventoryError.InvalidRequest({
+      message: `Hugging Face search requires a non-empty query of at most ${MAX_HUB_SEARCH_QUERY_BYTES} bytes and a limit between 1 and ${MAX_HUB_SEARCH_RESULTS}`,
+    })
+  }
+}
+
+const validateRepositoryRequest = (request: HuggingFaceRepositoryRequest): void => {
+  if (!validRepository(request.repository)) {
+    throw InventoryError.InvalidRequest({
+      message: "Hugging Face repository id is invalid",
+    })
+  }
+  if (!validHubRevision(request.revision)) {
+    throw InventoryError.InvalidRequest({
+      message: "Hugging Face revision contains unsupported characters",
+    })
+  }
+}
+
+/** Search live Hugging Face GGUF models. Inject `fetch` in tests to avoid network. */
+export const searchHuggingFaceModels = async (
+  request: HuggingFaceModelSearchRequest,
+  options: HuggingFaceHubOptions = {},
+): Promise<HuggingFaceModelSearchResults> => {
+  validateSearchRequest(request)
+  const endpoint = options.endpoint ?? DEFAULT_HF_ENDPOINT
+  const fetchFn = options.fetch ?? globalThis.fetch
+  const token = options.token ?? process.env.HF_TOKEN
+  const url = hubSearchUrl(endpoint, request.query.trim(), request.limit)
+  const response = await fetchFn(url, { headers: hubAuthHeaders(token) })
+  if (!response.ok) {
+    throw InventoryError.Upstream({
+      message: `Hugging Face search returned HTTP ${response.status}`,
+    })
+  }
+  const metadata = (await response.json()) as HubSearchModel[]
+  if (!Array.isArray(metadata)) {
+    throw InventoryError.Upstream({ message: "Hugging Face search returned a non-array payload" })
+  }
+  return {
+    models: metadata.flatMap((model) => {
+      const mapped = hubSearchModelToContract(model)
+      return mapped === undefined ? [] : [mapped]
+    }),
+  }
+}
+
+/** Resolve an immutable repository snapshot. Inject `fetch` in tests to avoid network. */
+export const resolveHuggingFaceRepository = async (
+  request: HuggingFaceRepositoryRequest,
+  options: HuggingFaceHubOptions = {},
+): Promise<HuggingFaceRepositorySnapshot> => {
+  validateRepositoryRequest(request)
+  const endpoint = options.endpoint ?? DEFAULT_HF_ENDPOINT
+  const fetchFn = options.fetch ?? globalThis.fetch
+  const token = options.token ?? process.env.HF_TOKEN
+  const url = `${revisionMetadataUrl(endpoint, request.repository, request.revision)}?blobs=true`
+  const response = await fetchFn(url, { headers: hubAuthHeaders(token) })
+  if (!response.ok) {
+    throw InventoryError.Upstream({
+      message: `Hugging Face resolve returned HTTP ${response.status}`,
+    })
+  }
+  const model = (await response.json()) as HubModel
+  try {
+    return hubModelToSnapshot(model, request.repository, request.revision)
+  } catch (error) {
+    throw InventoryError.Upstream({
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
 /** Network-backed repository refresh is deferred; callers should inject a snapshot provider in tests. */
 export const refreshHuggingFaceRepository = async (): Promise<never> => {
   throw new Error(
@@ -190,8 +297,15 @@ export const refreshHuggingFaceRepository = async (): Promise<never> => {
 }
 
 export class ModelPreviewService {
-  // Full preview orchestration depends on ManagedModelStore network paths; use hub helpers above in tests.
-  constructor() {}
+  constructor(private readonly options: HuggingFaceHubOptions = {}) {}
+
+  search(request: HuggingFaceModelSearchRequest): Promise<HuggingFaceModelSearchResults> {
+    return searchHuggingFaceModels(request, this.options)
+  }
+
+  resolve(request: HuggingFaceRepositoryRequest): Promise<HuggingFaceRepositorySnapshot> {
+    return resolveHuggingFaceRepository(request, this.options)
+  }
 }
 
-export type PreviewInventoryError = InventoryError
+export type PreviewInventoryError = InventoryErrorType

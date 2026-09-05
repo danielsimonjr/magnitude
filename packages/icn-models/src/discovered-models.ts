@@ -217,6 +217,8 @@ export class ManagedDiscoveredModels {
     private readonly resolver: {
       revision(): number
       snapshot(): InstalledPackageSnapshot
+      ensureInstalledModelInventory?(): Promise<void>
+      ensureModelInventory?(): Promise<void>
     },
   ) {}
 
@@ -226,5 +228,15 @@ export class ManagedDiscoveredModels {
       reconciliationComplete: true,
       models: discoveredModels(this.resolver.snapshot()),
     }
+  }
+
+  /** Re-snapshots discovery after optionally ensuring inventory is current. */
+  async refreshDiscovery() {
+    if (this.resolver.ensureInstalledModelInventory !== undefined) {
+      await this.resolver.ensureInstalledModelInventory()
+    } else if (this.resolver.ensureModelInventory !== undefined) {
+      await this.resolver.ensureModelInventory()
+    }
+    return this.snapshot()
   }
 }
