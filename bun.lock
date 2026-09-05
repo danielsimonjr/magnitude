@@ -333,7 +333,6 @@
       "dependencies": {
         "@effect/platform": "^0.96.0",
         "@effect/platform-bun": "^0.90.0",
-        "@magnitudedev/icn-contracts": "workspace:*",
         "@magnitudedev/icn-protocol": "workspace:*",
         "@noble/hashes": "^2.2.0",
         "effect": "3.21.2",
