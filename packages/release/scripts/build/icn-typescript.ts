@@ -91,6 +91,35 @@ const cmakeFeatureFlags = (
   return flags
 }
 
+/**
+ * CMake only honors CMAKE_* values from the cache / -D flags. Putting them in the
+ * process environment alone leaves variables like CMAKE_CUDA_ARCHITECTURES undefined,
+ * so llama.cpp falls back to its default arch list (including Hopper/Blackwell), which
+ * breaks CUDA 11.8 and Windows CUDA configure.
+ */
+export const cmakeDefinesFromEnvironment = (
+  environment: Readonly<Record<string, string | undefined>>,
+): readonly string[] =>
+  Object.entries(environment)
+    .filter((entry): entry is [string, string] =>
+      entry[0].startsWith("CMAKE_") && typeof entry[1] === "string" && entry[1].length > 0)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `-D${key}=${value}`)
+
+export const withoutWindowsLlvmPath = (
+  environment: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string>> => {
+  const pathKey =
+    Object.keys(environment).find((key) => key.toUpperCase() === "PATH") ?? "Path"
+  const pathValue = environment[pathKey] ?? environment.PATH ?? environment.Path ?? ""
+  return {
+    [pathKey]: pathValue
+      .split(";")
+      .filter((entry) => entry.length > 0 && !/[\\/]Llvm[\\/]/i.test(entry))
+      .join(";"),
+  }
+}
+
 const nativeRpathEnvironment = (
   target: string,
 ): Readonly<Record<string, string>> => {
@@ -259,7 +288,27 @@ export const buildIcnNativeArtifacts = async (input: {
   await rm(stageRoot, { recursive: true, force: true })
   await mkdir(packageDir, { recursive: true, mode: 0o700 })
 
-  const featureFlags = cmakeFeatureFlags(input.features ?? ["dynamic-backends"])
+  const features = input.features ?? ["dynamic-backends"]
+  const featureFlags = cmakeFeatureFlags(features)
+  const buildEnvironment = {
+    ...input.buildEnvironment,
+    ...nativeRpathEnvironment(input.target),
+  }
+  // On Windows, VS puts LLVM's lld-link ahead of MSVC link.exe. CUDA device
+  // linking requires the MSVC linker, so drop LLVM directories from PATH while
+  // configuring and building CUDA backends.
+  const processEnvironment =
+    process.platform === "win32" && features.some((feature) => feature.includes("cuda"))
+      ? {
+          ...process.env,
+          ...buildEnvironment,
+          ...withoutWindowsLlvmPath(process.env),
+        }
+      : {
+          ...process.env,
+          ...buildEnvironment,
+        }
+  const cmakeDefines = cmakeDefinesFromEnvironment(buildEnvironment)
   await run([
     cmake,
     "-S",
@@ -267,6 +316,7 @@ export const buildIcnNativeArtifacts = async (input: {
     "-B",
     buildDir,
     ...featureFlags,
+    ...cmakeDefines,
     "-DGGML_NATIVE=OFF",
     "-DLLAMA_BUILD_TESTS=OFF",
     "-DLLAMA_BUILD_EXAMPLES=OFF",
@@ -276,11 +326,7 @@ export const buildIcnNativeArtifacts = async (input: {
     "-DCMAKE_BUILD_TYPE=Release",
   ], {
     cwd: PROJECT_ROOT,
-    env: {
-      ...process.env,
-      ...input.buildEnvironment,
-      ...nativeRpathEnvironment(input.target),
-    },
+    env: processEnvironment,
   })
   await run([
     cmake,
@@ -292,10 +338,7 @@ export const buildIcnNativeArtifacts = async (input: {
     "Release",
   ], {
     cwd: PROJECT_ROOT,
-    env: {
-      ...process.env,
-      ...input.buildEnvironment,
-    },
+    env: processEnvironment,
   })
 
   const llamaLibDir = await findLlamaLibDir(buildDir, platform)

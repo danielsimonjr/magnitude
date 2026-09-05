@@ -1,6 +1,5 @@
 import { readFileSync, statSync } from "node:fs"
-import { basename, dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { basename } from "node:path"
 import {
   CatalogBaseId,
   catalogBaseId,
@@ -21,10 +20,13 @@ import {
 import { Option } from "effect"
 import { PlannerBundle } from "./planner-bundle"
 import { ServableModelBundleKey, servableModelBundleKeyForBundle } from "./package-service"
+import catalogLockJson from "../../../inference/catalog/models.lock.json" with { type: "json" }
+import catalogModelsJson from "../../../inference/catalog/models.json" with { type: "json" }
 
-const CATALOG_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../inference/catalog")
-const CATALOG_SOURCE = readFileSync(join(CATALOG_DIR, "models.json"), "utf8")
-const CATALOG_LOCK = readFileSync(join(CATALOG_DIR, "models.lock.json"), "utf8")
+// Import the authored catalog as JSON so Bun --compile embeds it in the binary.
+// Resolving a filesystem path from import.meta.url breaks under the virtual /$bunfs root.
+const CATALOG_SOURCE = JSON.stringify(catalogModelsJson)
+const CATALOG_LOCK = JSON.stringify(catalogLockJson)
 const MIN_CATALOG_CONTEXT_LENGTH = 4_096
 const MAX_PLANNER_BUNDLE_BYTES = 2 * 1024 * 1024 * 1024
 
