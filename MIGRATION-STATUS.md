@@ -6,9 +6,9 @@ Tracks the TypeScript-on-Bun migration of the inference engine described in
 | Phase | Status | Notes |
 |---|---|---|
 | 1. Native slice (`packages/icn-native`) | Done | Loads GGUF, tokenizes, greedy decode, streams text; sampler-chain + chat-template FFI surface added; 16+ tests; verified on CPU with a synthetic model |
-| 2. Contracts and store | Done | `icn-contracts` + `icn-models` on real contracts imports; digest-verified resumable downloads; HF search/resolve with injectable `fetch` |
+| 2. Contracts and store | Done | `icn-contracts` + `icn-models` on real contracts imports; digest-verified resumable downloads; HF search/resolve with injectable `fetch`; catalog install get/cancel/ack; discovery refresh; package remover |
 | 3. Engine | Done (CPU) | Scheduler, sequence pool, KV reuse, sampling (greedy + native sampler chain), reasoning/template apply, speculative preflight validation, multimodal envelope validation; Worker FFI owner; `@magnitudedev/icn-parity` greedy determinism harness |
-| 4. HTTP and lifecycle | Done (CPU) | Full OpenAPI route surface in `icn-server` (catalog install/remove/cancel/ack, discovery refresh, HF sources, instances, load-plan, templates, assessments, responses, anthropic, events SSE, openapi.json); worker IPC; planning-worker; Windows `taskkill /T`; hardware filesystem probes |
+| 4. HTTP and lifecycle | Done (CPU) | Full OpenAPI route surface in `icn-server` (catalog install/remove/cancel/ack, discovery refresh, HF sources, instances, load-plan, templates, assessments, responses, anthropic, events SSE, openapi.json); worker IPC; planning-worker; Windows `taskkill /T`; hardware filesystem probes (libcuda/Vulkan/Metal) |
 | 5. Release cutover | Done (default host build) | `buildHostArtifacts` / backend packs use `buildTypescriptIcnBinaryBundle`; ships Bun-compiled `magnitude-inference` + native llama/shim/cpu modules. Rust ICN binary is no longer the release default |
 
 ## Test totals (this branch)
@@ -16,12 +16,13 @@ Tracks the TypeScript-on-Bun migration of the inference engine described in
 | Package | Tests |
 |---|---|
 | `@magnitudedev/icn-contracts` | 37 |
-| `@magnitudedev/icn-models` | 51 |
+| `@magnitudedev/icn-models` | 61 |
 | `@magnitudedev/icn-engine` | 40 (+3 GGUF-gated skipped without model) |
-| `@magnitudedev/icn-hardware` | 19 |
+| `@magnitudedev/icn-hardware` | 22 |
 | `@magnitudedev/icn-server` | 24 |
 | `@magnitudedev/icn-parity` | 1 (+1 gated) |
-| **Total new** | **~172** |
+| `@magnitudedev/icn-native` | 8 (+8 GGUF-gated) |
+| **Total new** | **~193** |
 
 ## Decisions resolved
 
