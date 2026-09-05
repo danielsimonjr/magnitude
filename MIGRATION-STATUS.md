@@ -16,13 +16,13 @@ Tracks the TypeScript-on-Bun migration of the inference engine described in
 | Package | Tests |
 |---|---|
 | `@magnitudedev/icn-contracts` | 37 |
-| `@magnitudedev/icn-models` | 61 |
+| `@magnitudedev/icn-models` | 63 |
 | `@magnitudedev/icn-engine` | 40 (+3 GGUF-gated skipped without model) |
 | `@magnitudedev/icn-hardware` | 22 |
 | `@magnitudedev/icn-server` | 24 |
 | `@magnitudedev/icn-parity` | 1 (+1 gated) |
 | `@magnitudedev/icn-native` | 8 (+8 GGUF-gated) |
-| **Total new** | **~193** |
+| **Total new** | **~195** |
 
 ## Decisions resolved
 
