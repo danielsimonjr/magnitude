@@ -5,11 +5,11 @@ Tracks the TypeScript-on-Bun migration of the inference engine described in
 
 | Phase | Status | Notes |
 |---|---|---|
-| 1. Native slice (`packages/icn-native`) | Done | Loads GGUF, tokenizes, greedy decode, streams text; 16 tests; verified on CPU with a synthetic model |
-| 2. Contracts and store | In progress | `icn-contracts` (37 tests) + `icn-models` on real `@magnitudedev/icn-contracts` imports (51 tests, `ManagedModelDownloads` + digest-verified resumable downloads with mocked HTTP); HF network paths mocked |
-| 3. Engine | In progress | `packages/icn-engine` scheduler, sequence pool, KV reuse, sampling config, reasoning resolution (33 CPU tests, 3 GGUF-gated); greedy native sampling + `createInProcessInferenceSession` / `spawnInferenceWorker` with MessageChannel token streams wired; speculative/multimodal remain stubbed |
-| 4. HTTP and lifecycle | In progress | `packages/icn-server` (bootstrap, Bun HTTP, auth, fake completions, catalog/discovery/installations/instances routes via `icn-models`, worker IPC with `--fake`/`--local-engine`, memory supervisor, CLI, minimal `planning-worker` via planner-bundle, Windows `taskkill /F /T /PID`); `packages/icn-hardware` memory policy, CPU-side capacity summary, memory-domain snapshot building, calibration record validation, and typed GPU probe stubs (19 CPU tests); inference/chat/responses/HF/install routes still 501; ACN lifecycle integration pending |
-| 5. Release cutover | In progress | Host/backend release builds compile Bun `magnitude-inference` via `buildTypescriptIcnBinaryBundle` and package llama/shim/cpu backends from the icn-native cmake build. `inference/` is retained for native llama.cpp + shim sources (Rust crates superseded). Full runner matrix and one stable TS ship still required before deleting Rust crates. |
+| 1. Native slice (`packages/icn-native`) | Done | Loads GGUF, tokenizes, greedy decode, streams text; sampler-chain + chat-template FFI surface added; 16+ tests; verified on CPU with a synthetic model |
+| 2. Contracts and store | Done | `icn-contracts` + `icn-models` on real contracts imports; digest-verified resumable downloads; HF search/resolve with injectable `fetch` |
+| 3. Engine | Done (CPU) | Scheduler, sequence pool, KV reuse, sampling (greedy + native sampler chain), reasoning/template apply, speculative preflight validation, multimodal envelope validation; Worker FFI owner; `@magnitudedev/icn-parity` greedy determinism harness |
+| 4. HTTP and lifecycle | Done (CPU) | Full OpenAPI route surface in `icn-server` (catalog install/remove/cancel/ack, discovery refresh, HF sources, instances, load-plan, templates, assessments, responses, anthropic, events SSE, openapi.json); worker IPC; planning-worker; Windows `taskkill /T`; hardware filesystem probes |
+| 5. Release cutover | Done (default host build) | `buildHostArtifacts` / backend packs use `buildTypescriptIcnBinaryBundle`; ships Bun-compiled `magnitude-inference` + native llama/shim/cpu modules. Rust ICN binary is no longer the release default |
 
 ## Test totals (this branch)
 
@@ -17,30 +17,25 @@ Tracks the TypeScript-on-Bun migration of the inference engine described in
 |---|---|
 | `@magnitudedev/icn-contracts` | 37 |
 | `@magnitudedev/icn-models` | 51 |
-| `@magnitudedev/icn-engine` | 33 (+3 GGUF-gated) |
+| `@magnitudedev/icn-engine` | 40 (+3 GGUF-gated skipped without model) |
 | `@magnitudedev/icn-hardware` | 19 |
-| `@magnitudedev/icn-server` | 23 |
-| **Total new** | **163** |
+| `@magnitudedev/icn-server` | 24 |
+| `@magnitudedev/icn-parity` | 1 (+1 gated) |
+| **Total new** | **~172** |
 
-## Open items requiring hardware
+## Decisions resolved
 
-- Native llama.cpp device discovery, bounded synthetic calibration measurement, and generation-performance estimation.
-- Metal, CUDA, Vulkan backend loading from Bun; live GPU memory probes beyond typed absent stubs.
-- Throughput parity on reference hardware.
-- Production-model behavior: chat templates, grammars, speculative decoding, multimodal.
-- First Windows release build on release runners.
-- Matrix build of Bun-compiled `magnitude-inference` + shim/backends on release runners.
+- Python benchmark adapters under `packages/inference-benchmark/engines` (MLX-LM, MLX-VLM, oMLX): **kept** as comparison-only evidence drivers for Python-only engines. They are not part of the TypeScript ICN rewrite and have no TS form.
 
-## Open items (CPU-verifiable, unfinished)
+## Open items requiring hardware / release runners
 
-- Complete HF-backed catalog refresh and release catalog materialization.
-- Connect engine sampling/chat-template paths to `@magnitudedev/icn-native` and add CPU token-for-token parity harness (greedy generation + worker protocol landed; full sampler chain and chat templates remain).
-- Port remaining OpenAPI management routes (install/remove/HF/chat templates/responses), real GGUF worker subprocess, and ACN integration suite against the TS engine. TS server exposes length-prefixed JSON worker IPC (`--fake` / `--local-engine`) aligned with Rust framing; planning-worker speaks Initialize/Assess with stub calibration.
-- Wire `packages/icn-server` hardware routes to `packages/icn-hardware` snapshot/calibration helpers and native backend discovery when Bun backends land.
-- After one stable TypeScript ICN release on the runner matrix, remove the Rust `inference/crates` workspace (keep `inference/native` and cmake sources).
+- Live GPU device enumeration and generation-performance calibration (CUDA/Vulkan/Metal) beyond filesystem loader probes.
+- Throughput parity on reference hardware (within 10% of Rust oracle).
+- Speculative decoding and multimodal projector end-to-end against real GGUF + projector artifacts.
+- Matrix build of Bun-compiled `magnitude-inference` + shim/backends on release runners (macOS arm64, Linux x64/arm64 CUDA/Vulkan, Windows x64).
+- Remove Magnitude-authored Rust crates under `inference/crates` after one stable TypeScript ship; keep `inference/native` (vendored llama.cpp) for the shim build.
 
-## Decisions
+## Remaining CPU follow-ups
 
-- Python benchmark adapters under `packages/inference-benchmark/engines` (MLX-LM, MLX-VLM, oMLX):
-  **KEEP** for MLX comparison. They drive Python-only engines that have no TypeScript form and remain
-  part of the documented benchmark evidence alongside the TypeScript parity harness.
+- Wire live HF catalog refresh into release catalog materialization when network credentials are available (injectable HTTP paths are landed; production refresh scheduling remains).
+- Expand ACN lifecycle integration suite against the TS binary as the default `MAGNITUDE_ICN_PATH`.

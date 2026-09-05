@@ -114,3 +114,19 @@ describe("reconcile reasoning effort", () => {
     expect(reconciled.reasoning).toMatchObject({ effort: "high" })
   })
 })
+
+const BASIC =
+  "{% for message in messages %}{{ message['role'] }}: {{ message['content'] }}\\n{% endfor %}assistant:"
+
+describe("inspectTemplate", () => {
+  it("does not throw for basic messages and returns a fingerprint", async () => {
+    const { inspectTemplate } = await import("./resolve.js")
+    const result = await inspectTemplate(BASIC)
+    expect(result).not.toHaveProperty("_tag")
+    if ("_tag" in result) throw new Error("unexpected error")
+    expect(result.templateFingerprint.startsWith("sha256:")).toBe(true)
+    expect(result.capabilities.string_content).toBe(true)
+    expect(result.probePrompt).toContain("user: Hello")
+    expect(result.probePrompt).toContain("assistant:")
+  })
+})

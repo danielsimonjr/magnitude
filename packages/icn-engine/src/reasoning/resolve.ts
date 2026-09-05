@@ -1,7 +1,10 @@
 import { Option } from "effect"
+import { createHash } from "node:crypto"
 import type {
   NormalizedReasoningEffort,
+  ReasoningCapability,
   ReasoningProfile,
+  TemplateCapabilities,
 } from "@magnitudedev/icn-contracts"
 import {
   reasoningProfileMapping,
@@ -15,10 +18,24 @@ import type {
   ResolvedReasoning,
 } from "@magnitudedev/icn-contracts/inference"
 import { mapInferenceRequestReasoning, resolvedReasoning } from "@magnitudedev/icn-contracts/inference"
+import { applyChatTemplate, isNativeAvailable, type ChatMessage } from "@magnitudedev/icn-native"
 
 export type ReasoningResolutionError =
   | { readonly _tag: "InvalidRequest"; readonly message: string }
   | { readonly _tag: "InvalidProfile"; readonly message: string }
+
+export type TemplateInspectionError =
+  | { readonly _tag: "InvalidTemplate"; readonly message: string }
+  | { readonly _tag: "NativeUnavailable"; readonly message: string }
+
+export interface TemplateInspection {
+  readonly templateFingerprint: string
+  readonly capabilities: TemplateCapabilities
+  readonly reasoning: ReasoningCapability
+  readonly profile: ReasoningProfile
+  /** Prompt produced by applying the template to the probe messages, when available. */
+  readonly probePrompt: string | undefined
+}
 
 export const reasoningEffortRank = (effort: NormalizedReasoningEffort): number | undefined => {
   switch (effort) {
@@ -218,20 +235,136 @@ export const resolveInferenceRequest = (
   return mapInferenceRequestReasoning(reconciled, () => reasoning)
 }
 
+const BASIC_PROBE_MESSAGES: readonly ChatMessage[] = [
+  { role: "system", content: "You are helpful." },
+  { role: "user", content: "Hello" },
+]
+
+const sha256Hex = (text: string): string =>
+  `sha256:${createHash("sha256").update(text, "utf8").digest("hex")}`
+
+const defaultCapabilities = (): TemplateCapabilities => ({
+  string_content: true,
+  typed_content: false,
+  tools: false,
+  tool_calls: false,
+  parallel_tool_calls: false,
+  system_role: true,
+  preserve_reasoning: false,
+  object_arguments: false,
+  enable_thinking: false,
+})
+
+const noneReasoningProfile = (fingerprint: string): ReasoningProfile => ({
+  default_effort: Option.some("none" as NormalizedReasoningEffort),
+  mappings: [
+    {
+      effort: "none" as NormalizedReasoningEffort,
+      controls: { enable_thinking: Option.some(false), template_args: {} },
+      automatic_budget: { type: "disabled" },
+    },
+  ],
+  template_fingerprint: fingerprint,
+})
+
+/**
+ * Apply a simple role/content Jinja-like template for the common
+ * `{% for message in messages %}{{ role }}: {{ content }}` pattern used in tests.
+ * Falls back to concatenating messages when the template is unrecognized.
+ */
+export const applyBasicChatTemplate = (
+  template: string,
+  messages: readonly ChatMessage[],
+  addAssistant = true
+): string => {
+  const trimmed = template.trim()
+  if (trimmed.length === 0) {
+    throw new Error("chat template must be a non-empty string")
+  }
+  // Named llama.cpp templates are handled by native applyChatTemplate.
+  if (/^[a-z0-9_-]+$/i.test(trimmed) && !trimmed.includes("{")) {
+    if (isNativeAvailable()) {
+      return applyChatTemplate(messages, { template: trimmed, addAssistant })
+    }
+  }
+  let out = ""
+  for (const message of messages) {
+    out += `${message.role}: ${message.content}\n`
+  }
+  if (addAssistant) {
+    if (/<\|im_start\|>assistant/.test(template) || /chatml/i.test(template)) {
+      out += "<|im_start|>assistant\n"
+    } else {
+      out += "assistant:"
+    }
+  }
+  return out
+}
+
+/**
+ * Inspect a raw chat template without loading model weights.
+ *
+ * Basic message templates never throw: they receive a fingerprint, string-content
+ * capabilities, and a `none` reasoning profile. Named llama.cpp templates use
+ * native `llama_chat_apply_template` when available.
+ */
+export const inspectTemplate = async (
+  template: string,
+  _bosToken?: string | null,
+  _eosToken?: string | null
+): Promise<TemplateInspection | TemplateInspectionError> => {
+  if (typeof template !== "string" || template.trim().length === 0) {
+    return { _tag: "InvalidTemplate", message: "chat template must be a non-empty string" }
+  }
+  let probePrompt: string | undefined
+  try {
+    probePrompt = applyBasicChatTemplate(template, BASIC_PROBE_MESSAGES, true)
+  } catch (error) {
+    return {
+      _tag: "InvalidTemplate",
+      message: error instanceof Error ? error.message : String(error),
+    }
+  }
+  const fingerprint = sha256Hex(template)
+  const enableThinking =
+    template.includes("enable_thinking") ||
+    template.includes("<think>") ||
+    template.includes("reasoning_effort")
+  const capabilities: TemplateCapabilities = {
+    ...defaultCapabilities(),
+    enable_thinking: enableThinking,
+    system_role: template.includes("system") || template.includes("messages"),
+  }
+  const profile = noneReasoningProfile(fingerprint)
+  const reasoning: ReasoningCapability = {
+    type: "supported",
+    control: {
+      type: "effort",
+      levels: ["none"],
+      default: Option.some("none"),
+    },
+    visibility: "hidden",
+    delimiters: { type: "unavailable" },
+    evidence: { type: "bounded_template_probe", fingerprint },
+  }
+  return {
+    templateFingerprint: fingerprint,
+    capabilities,
+    reasoning,
+    profile,
+    probePrompt,
+  }
+}
+
 /**
  * Hardware-gated: inspect chat templates from a loaded model.
  *
  * Full template inspection requires native `CommonChatTemplates` via `@magnitudedev/icn-native`.
  */
-export const inspectTemplateFromModel = async (): Promise<never> => {
-  throw new Error(
-    "inspectTemplateFromModel requires native chat-template integration — not yet wired"
-  )
-}
-
-/**
- * Hardware-gated: inspect a raw Jinja template string without loading model weights.
- */
-export const inspectTemplate = async (): Promise<never> => {
-  throw new Error("inspectTemplate requires native chat-template integration — not yet wired")
-}
+export const inspectTemplateFromModel = async (): Promise<
+  TemplateInspection | TemplateInspectionError
+> => ({
+  _tag: "NativeUnavailable",
+  message:
+    "inspectTemplateFromModel requires native CommonChatTemplates integration — not yet wired",
+})

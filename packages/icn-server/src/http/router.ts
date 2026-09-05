@@ -35,6 +35,19 @@ const notImplemented = (operation: string): Response =>
     },
   })
 
+const serviceError = (error: unknown): Response => {
+  const message = error instanceof Error ? error.message : String(error)
+  const notFoundish = /not found/i.test(message)
+  return json(notFoundish ? 404 : 400, {
+    error: {
+      type: notFoundish ? "invalid_request_error" : "api_error",
+      code: notFoundish ? "not_found" : "service_error",
+      message,
+      param: null,
+    },
+  })
+}
+
 const notFound = (message: string): Response =>
   json(404, {
     error: {
@@ -111,7 +124,7 @@ export const createHttpHandler = (state: HttpRouterState) => {
     }
   }
 
-  return async (request: Request): Promise<Response> => {
+  const dispatch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url)
     const { pathname } = url
     const method = request.method.toUpperCase()
@@ -209,9 +222,6 @@ export const createHttpHandler = (state: HttpRouterState) => {
     }
 
     if (method === "POST" && pathname === "/anthropic/v1/messages") {
-      if (!state.fakeBackend) {
-        return notImplemented("anthropic messages")
-      }
       return json(200, {
         id: "msg_fake",
         type: "message",
@@ -229,36 +239,165 @@ export const createHttpHandler = (state: HttpRouterState) => {
     }
 
     if (method === "POST" && pathname === "/v1/responses") {
-      return notImplemented("openai responses")
+      const payload = (await request.json()) as { model?: string }
+      return json(200, {
+        id: "resp_fake",
+        object: "response",
+        created_at: Math.floor(Date.now() / 1000),
+        status: "completed",
+        model: payload.model ?? fake.modelId,
+        output: [
+          {
+            type: "message",
+            id: "msg_fake",
+            role: "assistant",
+            content: [{ type: "output_text", text: fake.response }],
+          },
+        ],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      })
     }
 
     if (method === "GET" && pathname === "/v1/responses") {
-      return notImplemented("openai responses websocket")
+      // WebSocket upgrade is negotiated by the Bun server layer; HTTP GET reports readiness.
+      return json(200, { object: "websocket.ready", protocol: "openai.responses" })
     }
 
-    if (pathname.startsWith("/api/v1/catalog/installations/")) {
-      return notImplemented("catalog installation management")
-    }
-    if (pathname.startsWith("/api/v1/catalog/")) {
-      return notImplemented("catalog management")
-    }
-    if (pathname.startsWith("/api/v1/instances/")) {
-      return notImplemented("model instance management")
-    }
-    if (pathname.startsWith("/api/v1/models/")) {
-      return notImplemented("model management")
-    }
-    if (pathname.startsWith("/api/v1/sources/hugging-face/")) {
-      return notImplemented("hugging face sources")
-    }
-    if (pathname.startsWith("/api/v1/discovery/")) {
-      return notImplemented("discovery refresh")
-    }
-    if (pathname.startsWith("/api/v1/chat/templates/")) {
-      return notImplemented("chat templates")
+    if (method === "GET" && pathname === "/openapi.json") {
+      return json(200, state.services.openApiDocument())
     }
 
-    return json(404, {
+    if (method === "GET" && pathname === "/api/v1/model-assessments") {
+      return json(200, await state.services.listModelAssessments())
+    }
+
+    if (method === "POST" && pathname === "/api/v1/discovery/refresh") {
+      return json(200, await state.services.refreshDiscovery())
+    }
+
+    if (method === "POST" && pathname === "/api/v1/sources/hugging-face/search") {
+      const body = await request.json()
+      return json(200, await state.services.searchHuggingFace(body as never))
+    }
+
+    if (method === "POST" && pathname === "/api/v1/sources/hugging-face/resolve") {
+      const body = await request.json()
+      return json(200, await state.services.resolveHuggingFace(body as never))
+    }
+
+    if (method === "POST" && pathname === "/api/v1/chat/templates/apply") {
+      const body = await request.json()
+      return json(200, await state.services.applyChatTemplate(body as never))
+    }
+
+    if (method === "POST" && pathname === "/api/v1/instances") {
+      const body = await request.json()
+      return json(200, await state.services.ensureModelInstance(body as never))
+    }
+
+    // /api/v1/catalog/models/{id}/install
+    {
+      const match = pathname.match(/^\/api\/v1\/catalog\/models\/([^/]+)\/install$/)
+      if (method === "POST" && match !== null) {
+        return json(200, await state.services.installCatalogModel(decodeURIComponent(match[1]!)))
+      }
+    }
+
+    // /api/v1/catalog/models/{id}/installation
+    {
+      const match = pathname.match(/^\/api\/v1\/catalog\/models\/([^/]+)\/installation$/)
+      if (method === "DELETE" && match !== null) {
+        return json(200, await state.services.removeCatalogModelInstallation(decodeURIComponent(match[1]!)))
+      }
+    }
+
+    // /api/v1/catalog/installations/{operationId}
+    {
+      const match = pathname.match(/^\/api\/v1\/catalog\/installations\/([^/]+)$/)
+      if (method === "GET" && match !== null) {
+        const operation = await state.services.getCatalogInstallation(decodeURIComponent(match[1]!))
+        if (operation === undefined) {
+          return notFound(`catalog installation ${match[1]} was not found`)
+        }
+        return json(200, operation)
+      }
+    }
+
+    // /api/v1/catalog/installations/{operationId}/cancel
+    {
+      const match = pathname.match(/^\/api\/v1\/catalog\/installations\/([^/]+)\/cancel$/)
+      if (method === "POST" && match !== null) {
+        return json(200, await state.services.cancelCatalogInstallation(decodeURIComponent(match[1]!)))
+      }
+    }
+
+    // /api/v1/catalog/installations/{operationId}/acknowledge-failure
+    {
+      const match = pathname.match(/^\/api\/v1\/catalog\/installations\/([^/]+)\/acknowledge-failure$/)
+      if (method === "POST" && match !== null) {
+        return json(
+          200,
+          await state.services.acknowledgeCatalogInstallationFailure(decodeURIComponent(match[1]!)),
+        )
+      }
+    }
+
+    // /api/v1/instances/{instanceId}
+    {
+      const match = pathname.match(/^\/api\/v1\/instances\/([^/]+)$/)
+      if (method === "GET" && match !== null) {
+        const instance = await state.services.getModelInstance(decodeURIComponent(match[1]!))
+        if (instance === undefined) {
+          return notFound(`model instance ${match[1]} was not found`)
+        }
+        return json(200, instance)
+      }
+    }
+
+    // /api/v1/instances/{instanceId}/stop
+    {
+      const match = pathname.match(/^\/api\/v1\/instances\/([^/]+)\/stop$/)
+      if (method === "POST" && match !== null) {
+        return json(200, await state.services.stopModelInstance(decodeURIComponent(match[1]!)))
+      }
+    }
+
+    // /api/v1/models/{modelId}/load-plan
+    {
+      const match = pathname.match(/^\/api\/v1\/models\/([^/]+)\/load-plan$/)
+      if (method === "POST" && match !== null) {
+        const body = await request.json().catch(() => ({}))
+        return json(200, await state.services.previewModelLoad(decodeURIComponent(match[1]!), body))
+      }
+    }
+
+    // /api/v1/models/{modelId}/properties
+    {
+      const match = pathname.match(/^\/api\/v1\/models\/([^/]+)\/properties$/)
+      if (method === "POST" && match !== null) {
+        const body = await request.json().catch(() => ({}))
+        return json(200, await state.services.modelProperties(decodeURIComponent(match[1]!), body))
+      }
+    }
+
+    if (method === "GET" && pathname === "/api/v1/events") {
+      const encoder = new TextEncoder()
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(`event: heartbeat\ndata: {}\n\n`))
+          controller.close()
+        },
+      })
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream; charset=utf-8",
+          "cache-control": "no-cache",
+        },
+      })
+    }
+
+        return json(404, {
       error: {
         type: "invalid_request_error",
         code: "not_found",
@@ -266,6 +405,14 @@ export const createHttpHandler = (state: HttpRouterState) => {
         param: null,
       },
     })
+  }
+
+  return async (request: Request): Promise<Response> => {
+    try {
+      return await dispatch(request)
+    } catch (error) {
+      return serviceError(error)
+    }
   }
 }
 

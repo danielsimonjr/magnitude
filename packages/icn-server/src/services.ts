@@ -1,13 +1,34 @@
+import { Option } from "effect"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type {
+  ApplyTemplateRequest,
+  ApplyTemplateResponse,
+  CatalogInstallationAdmission,
+  CatalogInstallationOperation,
+  CatalogInstallationRemoval,
   CatalogInstallationsResponse,
   CatalogModel,
   CatalogModelsResponse,
   DiscoveredModelsResponse,
+  EnsureModelInstanceRequest,
+  HuggingFaceModelSearchRequest,
+  HuggingFaceModelSearchResults,
+  HuggingFaceRepositoryRequest,
+  HuggingFaceRepositorySnapshot,
+  ModelAssessmentsSnapshot,
+  ModelInstance,
   ModelInstancesSnapshot,
+  ModelLoadPlan,
 } from "@magnitudedev/icn-protocol"
+import {
+  searchHuggingFaceModels,
+  resolveHuggingFaceRepository,
+} from "@magnitudedev/icn-models"
+import type { ModelId } from "@magnitudedev/icn-contracts"
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 import type { CatalogPackageAffiliation, RecommendableModelCatalog } from "@magnitudedev/icn-contracts"
 import {
   CatalogAffiliations,
@@ -28,15 +49,39 @@ import { toWireJson } from "./wire.js"
 export interface ServerServices {
   listCatalogModels(): Promise<CatalogModelsResponse>
   getCatalogModel(modelId: string): Promise<CatalogModel | undefined>
-  listDiscoveredModels(): Promise<DiscoveredModelsResponse>
+  installCatalogModel(modelId: string): Promise<CatalogInstallationAdmission>
+  removeCatalogModelInstallation(modelId: string): Promise<CatalogInstallationRemoval>
   listCatalogInstallations(): Promise<CatalogInstallationsResponse>
+  getCatalogInstallation(operationId: string): Promise<CatalogInstallationOperation | undefined>
+  cancelCatalogInstallation(operationId: string): Promise<CatalogInstallationOperation>
+  acknowledgeCatalogInstallationFailure(operationId: string): Promise<CatalogInstallationOperation>
+  listDiscoveredModels(): Promise<DiscoveredModelsResponse>
+  refreshDiscovery(): Promise<DiscoveredModelsResponse>
   listModelInstances(): Promise<ModelInstancesSnapshot>
+  getModelInstance(instanceId: string): Promise<ModelInstance | undefined>
+  ensureModelInstance(request: EnsureModelInstanceRequest): Promise<ModelInstance>
+  stopModelInstance(instanceId: string): Promise<ModelInstance>
+  listModelAssessments(): Promise<ModelAssessmentsSnapshot>
+  previewModelLoad(modelId: string, body: unknown): Promise<ModelLoadPlan>
+  searchHuggingFace(request: HuggingFaceModelSearchRequest): Promise<HuggingFaceModelSearchResults>
+  resolveHuggingFace(request: HuggingFaceRepositoryRequest): Promise<HuggingFaceRepositorySnapshot>
+  applyChatTemplate(request: ApplyTemplateRequest): Promise<ApplyTemplateResponse>
+  modelProperties(modelId: string, body: unknown): Promise<Record<string, unknown>>
+  openApiDocument(): unknown
 }
 
 export interface ServerServicesOptions {
   readonly catalog?: RecommendableModelCatalog
   readonly inventory?: InventoryPort
-  readonly installations?: Pick<ManagedCatalogInstallations, "listCatalogInstallations">
+  readonly installations?: Pick<
+    ManagedCatalogInstallations,
+    | "listCatalogInstallations"
+    | "install"
+    | "remove"
+    | "get"
+    | "cancel"
+    | "acknowledgeFailure"
+  >
 }
 
 class InMemoryInventory implements InventoryPort {
@@ -66,6 +111,10 @@ class InMemoryInventory implements InventoryPort {
 
   revision(): number {
     return this.generation
+  }
+
+  async ensureModelInventory(): Promise<void> {
+    // In-memory inventory is already current.
   }
 }
 
@@ -108,10 +157,16 @@ export const createServerServices = (options: ServerServicesOptions = {}): Serve
   const discovered = new ManagedDiscoveredModels({
     revision: () => inventory.revision(),
     snapshot: () => inventory.snapshot(),
+    ensureModelInventory: () => inventory.ensureModelInventory(),
   })
   const installations =
     options.installations ??
     new ManagedCatalogInstallations(resolver, emptyDownloads, emptyRemover)
+
+  const instances = new Map<string, ModelInstance>()
+  let instanceRevision = 0
+
+  const asModelId = (modelId: string): ModelId => modelId as unknown as ModelId
 
   return {
     async listCatalogModels() {
@@ -125,14 +180,144 @@ export const createServerServices = (options: ServerServicesOptions = {}): Serve
       }
       return toWireJson(model) as CatalogModel
     },
-    async listDiscoveredModels() {
-      return wireDiscoveredModels(discovered.snapshot())
+    async installCatalogModel(modelId) {
+      return toWireJson(await installations.install(asModelId(modelId))) as CatalogInstallationAdmission
+    },
+    async removeCatalogModelInstallation(modelId) {
+      return toWireJson(await installations.remove(asModelId(modelId))) as CatalogInstallationRemoval
     },
     async listCatalogInstallations() {
       return wireInstallations(await installations.listCatalogInstallations())
     },
+    async getCatalogInstallation(operationId) {
+      try {
+        return toWireJson(await installations.get(operationId as never)) as CatalogInstallationOperation
+      } catch {
+        return undefined
+      }
+    },
+    async cancelCatalogInstallation(operationId) {
+      return toWireJson(await installations.cancel(operationId as never)) as CatalogInstallationOperation
+    },
+    async acknowledgeCatalogInstallationFailure(operationId) {
+      return toWireJson(
+        await installations.acknowledgeFailure(operationId as never),
+      ) as CatalogInstallationOperation
+    },
+    async listDiscoveredModels() {
+      return wireDiscoveredModels(discovered.snapshot())
+    },
+    async refreshDiscovery() {
+      return wireDiscoveredModels(await discovered.refreshDiscovery())
+    },
     async listModelInstances() {
-      return { revision: 0, instances: [] }
+      return { revision: instanceRevision, instances: [...instances.values()] }
+    },
+    async getModelInstance(instanceId) {
+      return instances.get(instanceId)
+    },
+    async ensureModelInstance(request) {
+      const modelId = String(request.modelId)
+      for (const existing of instances.values()) {
+        if (String(existing.modelId) === modelId && existing.lifecycle._tag === "Ready") {
+          return existing
+        }
+      }
+      instanceRevision += 1
+      const id = `inst_${instanceRevision}`
+      const instance: ModelInstance = {
+        id,
+        modelId: request.modelId,
+        lifecycle: {
+          _tag: "Ready",
+          allocation: {
+            contextWindowTokens: 4096,
+            parallelSequences: 1,
+            physicalContextTokens: 4096,
+            memoryDomains: [],
+          },
+        },
+      }
+      instances.set(id, instance)
+      return instance
+    },
+    async stopModelInstance(instanceId) {
+      const current = instances.get(instanceId)
+      if (current === undefined) {
+        throw new Error(`model instance ${instanceId} was not found`)
+      }
+      const stopped: ModelInstance = {
+        ...current,
+        lifecycle: { _tag: "Stopped", reason: { _tag: "UserRequested" } as never },
+      }
+      // Prefer a simple stopped reason compatible with wire JSON.
+      const lifecycle = { _tag: "Stopped" as const, reason: "user" as never }
+      const next = { ...current, lifecycle: lifecycle as ModelInstance["lifecycle"] }
+      instances.set(instanceId, next)
+      instanceRevision += 1
+      return next
+    },
+    async listModelAssessments() {
+      return {
+        revision: 0,
+        state: { _tag: "Preparing" },
+      }
+    },
+    async previewModelLoad(_modelId, _body) {
+      return {
+        contextWindowTokens: 4096,
+        parallelSequences: 1,
+        physicalContextTokens: 4096,
+        requiredSystemMemoryBytes: 0,
+      }
+    },
+    async searchHuggingFace(request) {
+      return toWireJson(await searchHuggingFaceModels(request as never)) as HuggingFaceModelSearchResults
+    },
+    async resolveHuggingFace(request) {
+      return toWireJson(await resolveHuggingFaceRepository(request as never)) as HuggingFaceRepositorySnapshot
+    },
+    async applyChatTemplate(request) {
+      const messages = request.messages
+      const lines: string[] = []
+      for (const message of messages) {
+        const role = "role" in message ? String((message as { role: string }).role) : "user"
+        const content = "content" in message ? (message as { content: unknown }).content : ""
+        const text =
+          typeof content === "string"
+            ? content
+            : content === null || content === undefined
+              ? ""
+              : JSON.stringify(content)
+        lines.push(`<|im_start|>${role}\n${text}<|im_end|>`)
+      }
+      lines.push("<|im_start|>assistant\n")
+      const prompt = lines.join("\n")
+      return {
+        additional_stops: ["<|im_end|>"],
+        generation_prompt: "<|im_start|>assistant\n",
+        grammar: "",
+        grammar_lazy: false,
+        grammar_triggers: [],
+        preserved_tokens: [],
+        prompt,
+        supports_thinking: false,
+        template_fingerprint: "ts-basic-chatml",
+        thinking_end_tag: Option.none(),
+        thinking_start_tag: Option.none(),
+      } as ApplyTemplateResponse
+    },
+    async modelProperties(modelId, _body) {
+      return {
+        model_id: modelId,
+        properties: {},
+      }
+    },
+    openApiDocument() {
+      const openapiPath = fileURLToPath(
+        new URL("../../icn-protocol/openapi.json", import.meta.url),
+      )
+      return JSON.parse(readFileSync(openapiPath, "utf8"))
     },
   }
 }
