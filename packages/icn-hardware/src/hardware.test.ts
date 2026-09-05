@@ -29,7 +29,17 @@ import {
 } from "./calibration.js"
 import { memoryBreakdown, MemoryAccountant, memoryCharge } from "@magnitudedev/icn-contracts"
 import { memorySample } from "./memory.js"
-import { probeBackendEligibility, stubGpuProbesUnavailable } from "./probes.js"
+import {
+  calibrationElapsedMicroseconds,
+  collectCudaDriverFiles,
+  isCudaDriverFilename,
+  probeBackendEligibility,
+  startCalibrationTimer,
+  stubGpuProbesUnavailable,
+} from "./probes.js"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 
 const gib = 1024n * 1024n * 1024n
 
@@ -372,5 +382,29 @@ describe("backend probes", () => {
     const report = probeBackendEligibility()
     expect(report.schemaVersion).toBe(1)
     expect(["absent", "failed", "usable"]).toContain(report.cuda.state)
+    expect(["absent", "failed", "usable"]).toContain(report.vulkan.state)
+    expect(["absent", "usable"]).toContain(report.metal.state)
+  })
+
+  it("accepts only versioned cuda driver provider names", () => {
+    expect(isCudaDriverFilename("libcuda.so.1")).toBe(true)
+    expect(isCudaDriverFilename("libcuda.so.555.42.02")).toBe(true)
+    expect(isCudaDriverFilename("libcuda.so")).toBe(false)
+    expect(isCudaDriverFilename("libcuda.so.stub")).toBe(false)
+  })
+
+  it("discovers sorted cuda driver files from a directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "cuda-probe-"))
+    for (const name of ["libcuda.so.2", "libcuda.so", "libcuda.so.1", "other.so.1"]) {
+      writeFileSync(join(root, name), "fixture")
+    }
+    expect(collectCudaDriverFiles(root)).toEqual([join(root, "libcuda.so.1"), join(root, "libcuda.so.2")])
+  })
+
+  it("measures calibration elapsed microseconds", async () => {
+    const stop = startCalibrationTimer()
+    await new Promise((resolve) => setTimeout(resolve, 2))
+    expect(stop()).toBeGreaterThan(0)
+    expect(calibrationElapsedMicroseconds(0n, 2_000n)).toBe(2)
   })
 })

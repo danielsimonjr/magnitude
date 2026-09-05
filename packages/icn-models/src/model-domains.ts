@@ -52,12 +52,20 @@ export const managedModelServices = (
   resolver: ModelDomainResolver,
   downloads: ModelDownloadsService,
   remover: CatalogPackageRemover,
+  inventory?: ConstructorParameters<typeof ManagedDiscoveredModels>[0],
 ): ManagedModelServices => {
   const installations = new ManagedCatalogInstallations(resolver, downloads, remover)
-  const discovered = new ManagedDiscoveredModels({
-    revision: () => resolver.revision(),
-    snapshot: () => ({ records: new Map() }),
-  })
+  const discovered = new ManagedDiscoveredModels(
+    inventory ?? {
+      revision: () => resolver.revision(),
+      installedPackageSnapshot: () => ({ records: new Map() }),
+      installedPackagesResponse: () => ({
+        revision: resolver.revision(),
+        reconciliationComplete: true,
+      }),
+      ensureModelInventory: async () => undefined,
+    },
+  )
   const catalog = new ManagedCatalogModels(resolver)
   return { catalog, discovered, installations }
 }

@@ -303,7 +303,9 @@ export class ModelDomainResolver {
   ) {}
 
   catalogDefinition(id: ModelId): RecommendableModel {
-    const definition = this.catalog.models.find((candidate) => catalogId(candidate) === id)
+    const definition = this.catalog.models.find(
+      (candidate) => catalogId(candidate).value === id.value,
+    )
     if (definition === undefined) {
       throw new Error(`model not found: ${id}`)
     }
@@ -366,7 +368,7 @@ export class ModelDomainResolver {
           ) ||
           this.catalog.models.some(
             (candidate) =>
-              catalogId(candidate) !== id &&
+              catalogId(candidate).value !== id.value &&
               catalogPackages(candidate).some(([package_]) => package_.id === packageId),
           ),
       ),
@@ -401,7 +403,7 @@ export class ModelDomainResolver {
         present.get(packageId)?.origin === "Magnitude" &&
         !this.catalog.models.some(
           (candidate) =>
-            catalogId(candidate) !== id &&
+            catalogId(candidate).value !== id.value &&
             catalogPackages(candidate).some(([package_]) => package_.id === packageId),
         ) &&
         !affiliations.some(

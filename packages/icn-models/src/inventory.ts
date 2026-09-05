@@ -29,7 +29,10 @@ import {
   type ModelPackageInstallationOrigin,
   type ModelPackageSource,
   type ModelSource,
+  type DeletePlan,
+  type DeletedModel,
   type RecommendableModel,
+  type RemoveInstalledModelPackageResponse,
   type ServableModelBundle,
 } from "@magnitudedev/icn-contracts"
 import { CatalogAffiliations } from "./catalog-affiliations"
@@ -49,6 +52,7 @@ import {
   validatedPackageFromResolved,
   type ValidatedModelPackage,
 } from "./package-service"
+import { deleteModelArtifacts, planDeleteForModel } from "./package-remover"
 import { resolveComponents } from "./service-resolve"
 import { ensureStoreLayout } from "./store-fs"
 import { recoverMap } from "./file-cache"
@@ -487,6 +491,69 @@ export class ManagedModelStore {
   /** Test hook: direct access to in-memory inventory models. */
   getModels(): Map<InventoryEntryId, InventoryModel> {
     return this.models
+  }
+
+  async planDelete(id: InventoryEntryId): Promise<DeletePlan> {
+    const model = this.models.get(id)
+    if (model === undefined) {
+      throw InventoryError.NotFound({ id })
+    }
+    return planDeleteForModel(this.config.root, model)
+  }
+
+  async delete(id: InventoryEntryId): Promise<DeletedModel> {
+    await this.acquireEnsureGate()
+    try {
+      const model = this.models.get(id)
+      if (model === undefined) {
+        throw InventoryError.NotFound({ id })
+      }
+      const plan = planDeleteForModel(this.config.root, model)
+      if (!plan.supported) {
+        throw InventoryError.Unsupported({
+          message: Option.getOrElse(plan.reason, () => "deletion unsupported"),
+        })
+      }
+      const freedBytes = deleteModelArtifacts(this.config.root, model)
+      this.models.delete(id)
+      this.cacheEvidence.delete(id)
+      this.installedPackages.records.delete(id)
+      persistInventoryIndex(this.cache, this.models, this.cacheEvidence, this.installedPackages)
+      this.ensureGeneration += 1
+      return {
+        id,
+        deleted: true,
+        freed_bytes: freedBytes,
+        retained_shared_bytes: plan.retained_shared_bytes,
+        plan,
+      }
+    } finally {
+      this.releaseEnsureGate()
+    }
+  }
+
+  async removeInstalled(packageId: ModelPackageId): Promise<RemoveInstalledModelPackageResponse> {
+    const managedOccurrences = [...this.installedPackages.records.values()]
+      .filter(
+        (record) =>
+          record.installed.package.id === packageId && record.installed.origin === "Magnitude",
+      )
+      .map((record) => record.model.id)
+    if (managedOccurrences.length === 0) {
+      throw InventoryError.NotFound({ id: packageId })
+    }
+    let removed = false
+    let freedBytes = 0n
+    for (const inventoryEntryId of managedOccurrences) {
+      const deleted = await this.delete(inventoryEntryId)
+      removed ||= deleted.deleted
+      freedBytes += deleted.freed_bytes
+    }
+    return {
+      packageId,
+      removed,
+      freedBytes: Number(freedBytes),
+    }
   }
 
   /** Test hook: block reconciliation like the Rust ensure_gate lock. */

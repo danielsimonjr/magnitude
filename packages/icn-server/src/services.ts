@@ -156,7 +156,11 @@ export const createServerServices = (options: ServerServicesOptions = {}): Serve
   const catalogModels = new ManagedCatalogModels(resolver)
   const discovered = new ManagedDiscoveredModels({
     revision: () => inventory.revision(),
-    snapshot: () => inventory.snapshot(),
+    installedPackageSnapshot: () => inventory.snapshot(),
+    installedPackagesResponse: () => ({
+      revision: inventory.revision(),
+      reconciliationComplete: inventory.installedPackagesResponse().reconciliationComplete,
+    }),
     ensureModelInventory: () => inventory.ensureModelInventory(),
   })
   const installations =
