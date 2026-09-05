@@ -1,0 +1,63 @@
+import type { ModelDomainInvalidation } from "./_contracts-shim"
+import type { CatalogPackageRemover } from "./_contracts-shim"
+import type { ModelDownloadsService } from "./catalog-installations"
+import { ManagedCatalogInstallations } from "./catalog-installations"
+import { ManagedCatalogModels, ModelDomainResolver } from "./catalog-models"
+import { ManagedDiscoveredModels } from "./discovered-models"
+
+export { ModelDomainResolver, ManagedCatalogModels, ManagedDiscoveredModels, ManagedCatalogInstallations }
+
+export interface ManagedModelServices {
+  catalog: ManagedCatalogModels
+  discovered: ManagedDiscoveredModels
+  installations: ManagedCatalogInstallations
+}
+
+export const domainChanges = (
+  initialRevision: number,
+  subscribe: (listener: (event: ModelDomainInvalidation) => void) => () => void,
+): AsyncIterable<ModelDomainInvalidation> => {
+  async function* changes(): AsyncGenerator<ModelDomainInvalidation> {
+    yield { revision: initialRevision }
+    const queue: ModelDomainInvalidation[] = []
+    let resolveNext: ((event: ModelDomainInvalidation) => void) | undefined
+    const unsubscribe = subscribe((event) => {
+      if (resolveNext !== undefined) {
+        resolveNext(event)
+        resolveNext = undefined
+        return
+      }
+      queue.push(event)
+    })
+    try {
+      while (true) {
+        const queued = queue.shift()
+        if (queued !== undefined) {
+          yield queued
+          continue
+        }
+        const event = await new Promise<ModelDomainInvalidation>((resolve) => {
+          resolveNext = resolve
+        })
+        yield event
+      }
+    } finally {
+      unsubscribe()
+    }
+  }
+  return changes()
+}
+
+export const managedModelServices = (
+  resolver: ModelDomainResolver,
+  downloads: ModelDownloadsService,
+  remover: CatalogPackageRemover,
+): ManagedModelServices => {
+  const installations = new ManagedCatalogInstallations(resolver, downloads, remover)
+  const discovered = new ManagedDiscoveredModels({
+    revision: () => resolver.revision(),
+    snapshot: () => ({ records: new Map() }),
+  })
+  const catalog = new ManagedCatalogModels(resolver)
+  return { catalog, discovered, installations }
+}
