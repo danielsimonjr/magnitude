@@ -21,4 +21,6 @@ Tracks the TypeScript-on-Bun migration of the inference engine described in
 ## Decisions pending
 
 - Python benchmark adapters under `packages/inference-benchmark/engines` (MLX-LM, MLX-VLM, oMLX):
-  keep as the documented non-TypeScript exception, or remove with their 8 comparison experiments.
+  owner: the inference migration integrator before phase 5. Keep them only if the 8 comparison
+  experiments remain part of the documented benchmark evidence after the TypeScript parity harness
+  lands; otherwise remove the adapters and those experiments together.
