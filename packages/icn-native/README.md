@@ -97,14 +97,17 @@ of the same ids, and verifies determinism after `reset()`.
 - Vocab: n_tokens, BOS/EOS, EOG check, tokenize, token_to_piece, detokenize
 - Context create/free, `n_ctx`/`n_batch`, KV clear, chunked prompt decode
 - Logits access, greedy sampling, streaming UTF-8-safe `generate()`
+- Sampler chain (temp / top-k / top-p / penalties + sample/accept)
+- `llama_chat_apply_template` for built-in named templates
+- Backend device enumeration (`ggml_backend_dev_*` via shim)
 
 ## Not yet covered
 
-- Sampling beyond greedy (temperature, top-k/p, min-p, penalties, `llama_sampler_*`)
+- Grammars / GBNF, DRY, mirostat, and reasoning-budget sampler stages
 - KV cache / state save and restore, sequence copy/shift, multi-sequence batching
 - Continuous batching and parallel requests
 - Embeddings / pooling output
-- Multimodal (mtmd), speculative decoding, grammars / GBNF, chat templates
+- Multimodal (mtmd), speculative decoding, full Jinja `CommonChatTemplates`
 - GPU backends (CUDA, Metal, Vulkan) and `GGML_BACKEND_DL` dynamic backends;
   the shim calls `ggml_backend_load_all()` so dynamic backends will register
   once built

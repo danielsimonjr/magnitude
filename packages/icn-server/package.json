@@ -17,7 +17,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bunx --bun vitest run"
+    "test": "bunx --bun vitest run",
+    "start": "bun src/main.ts"
   },
   "dependencies": {
     "@effect/platform": "^0.96.0",

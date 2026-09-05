@@ -1,9 +1,19 @@
 # Magnitude ICN
 
-This workspace builds the Inference Control Node. `icn-contracts` defines transport- and
-backend-neutral contracts; `icn-models`, `icn-hardware`, and `icn-reasoning` own model lifecycle,
-fit assessment, and template reasoning inspection; `icn-engine` owns live inference; `icn-api`
-exports the HTTP/OpenAPI boundary; and `icn-server` is the composition root.
+> **Migration note (phase 5):** The product ICN is now the TypeScript packages under
+> `packages/icn-*`, compiled by Bun to `magnitude-inference`. Rust crates under
+> `inference/crates/` are **superseded** for shipping and are retained only until one
+> stable TypeScript release clears the runner matrix. **Do not delete `inference/`** —
+> native llama.cpp sources, the bindings gitlink, cmake trees, and parity/benchmark
+> assets still live here and are consumed by `@magnitudedev/icn-native`.
+
+This workspace historically built the Inference Control Node in Rust. `icn-contracts` defined
+transport- and backend-neutral contracts; `icn-models`, `icn-hardware`, and `icn-reasoning` owned
+model lifecycle, fit assessment, and template reasoning inspection; `icn-engine` owned live
+inference; `icn-api` exported the HTTP/OpenAPI boundary; and `icn-server` was the composition root.
+
+The TypeScript successors live under `packages/icn-contracts`, `packages/icn-models`,
+`packages/icn-hardware`, `packages/icn-engine`, `packages/icn-server`, and `packages/icn-native`.
 
 The native dependency has two independently recorded revisions in `native-pin.toml`: the exact
 `llama-cpp-rs` commit and the llama.cpp gitlink embedded by that commit. The editable binding source

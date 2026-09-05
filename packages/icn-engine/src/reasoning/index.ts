@@ -1,4 +1,5 @@
 export {
+  applyBasicChatTemplate,
   inspectTemplate,
   inspectTemplateFromModel,
   reasoningEffortRank,
@@ -7,4 +8,6 @@ export {
   resolveReasoningIntent,
   roundUpOrClampReasoningEffort,
   type ReasoningResolutionError,
+  type TemplateInspection,
+  type TemplateInspectionError,
 } from "./resolve.js"

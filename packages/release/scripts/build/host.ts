@@ -36,7 +36,7 @@ import {
   verifyAppleDeploymentTarget,
   verifyOwnedLoaderPaths,
 } from "./common"
-import { buildIcnBinary } from "../../../../inference/scripts/compile"
+import { buildTypescriptIcnBinaryBundle } from "./icn-typescript"
 import { ACN_COORDINATION_REVISION } from "@magnitudedev/version"
 import {
   ACN_EXECUTABLE_NAME,
@@ -275,7 +275,8 @@ export const buildHostArtifacts = async (
   ], { cwd: PROJECT_ROOT })
   const cli = await buildCliBinary(host.bunTarget)
   const acn = await buildAcnBinary(host.bunTarget)
-  const icn = await buildIcnBinary({
+  // TypeScript magnitude-inference binary + llama/shim/cpu backends from icn-native.
+  const icn = await buildTypescriptIcnBinaryBundle({
     target: host.bunTarget,
     profile: `base-${host.id}`,
     features: host.cargoFeatures,
@@ -291,9 +292,10 @@ export const buildHostArtifacts = async (
   if (cpuModules.length === 0) {
     throw new Error(`${host.id} ICN base emitted no CPU module`)
   }
+  // Bun-compiled ICN loads natives through bun:ffi, not the dynamic linker, so skip
+  // executable RPATH checks; still require owned loader paths on shim/llama/backends.
   await verifyOwnedLoaderPaths({
     host: host.id,
-    executable: icn.binary,
     modules: cpuModules,
     runtime: icn.runtimeLibraries,
   })

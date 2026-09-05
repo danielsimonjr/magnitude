@@ -30,8 +30,17 @@ const terminateUnixProcessGroup = (pid: number, signal: NodeJS.Signals): void =>
   }
 }
 
-const terminateWindowsProcessTree = (_pid: number, _signal: NodeJS.Signals): void => {
-  // TODO(wave-5): use @magnitudedev/acn-protocol/coordination job-object semantics via taskkill /T.
+const terminateWindowsProcessTree = (pid: number, _signal: NodeJS.Signals): void => {
+  // Match @magnitudedev/acn-protocol/coordination job-object semantics via taskkill /T.
+  // Phase-5 cutover always force-kills the tree (/F) so orphaned GPU workers cannot linger.
+  try {
+    Bun.spawnSync(["taskkill", "/F", "/T", "/PID", String(pid)], {
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+  } catch {
+    // Process already exited or taskkill unavailable in this environment.
+  }
 }
 
 export const terminateProcessTree = (pid: number, signal: NodeJS.Signals): void => {
@@ -118,3 +127,4 @@ export const workerCommand = (
 export * from "./protocol.js"
 export * from "./ipc.js"
 export * from "./runner.js"
+export * from "./planning.js"

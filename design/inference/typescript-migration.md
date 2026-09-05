@@ -6,6 +6,7 @@ applies_to:
   - packages/icn-engine/**
   - packages/icn-hardware/**
   - packages/icn-server/**
+  - packages/icn-parity/**
   - packages/icn/**
   - packages/icn-protocol/**
   - packages/release/scripts/build/icn-typescript.ts
@@ -105,12 +106,14 @@ provides the same shape with a dedicated `Worker` per inference worker process:
 4. **HTTP and lifecycle.** Full OpenAPI implementation, bootstrap records, worker processes,
    memory supervisor. Exit: `@magnitudedev/icn` lifecycle tests and the ACN integration suite pass
    against the TypeScript engine with no client changes.
-5. **Release cutover.** `packages/release` builds the Bun-compiled executable and the shim library
-   for every host and backend pack; the Rust workspace is removed once the released TypeScript
-   engine has shipped one stable version.
+5. **Release cutover.** `packages/release` builds the Bun-compiled `magnitude-inference` executable
+   and packages llama/shim/CPU backend libraries from the icn-native cmake build for every host and
+   backend pack. The Rust crates under `inference/crates` are superseded for shipping; `inference/`
+   is retained for native llama.cpp sources until one stable TypeScript release clears the runner
+   matrix, after which those crates may be removed.
 
-Until phase 5, the Rust engine remains the shipped engine and the TypeScript engine is selected only
-through `MAGNITUDE_ICN_PATH` for development and parity runs.
+Release host builds select the TypeScript engine by default. Override with `MAGNITUDE_ICN_PATH` only
+when deliberately running an alternate binary for development or parity.
 
 ## Execution model: agent-driven waves
 

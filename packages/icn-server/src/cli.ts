@@ -6,6 +6,7 @@ import { binaryIdentity } from "./build-identity.js"
 import { resolveAuthToken, type ServeConfig } from "./config.js"
 import { startServer } from "./server.js"
 import { runInferenceWorkerProcess } from "./worker/runner.js"
+import { runPlanningWorkerProcess } from "./worker/planning.js"
 
 const encodeIdentity = Schema.encodeSync(Schema.parseJson(IcnBinaryIdentity))
 const encodeEligibility = Schema.encodeSync(Schema.parseJson(BackendEligibilityReport))
@@ -67,6 +68,7 @@ export const runCli = async (argv: ReadonlyArray<string>): Promise<number> => {
       installation: { type: "string" },
       json: { type: "boolean" },
       "local-engine": { type: "boolean" },
+      "development-runtime": { type: "boolean" },
     },
   })
 
@@ -107,8 +109,12 @@ export const runCli = async (argv: ReadonlyArray<string>): Promise<number> => {
       return 0
     }
     case "planning-worker":
-      console.error("planning-worker is not implemented in the TypeScript ICN server yet")
-      return 2
+      return runPlanningWorkerProcess({
+        installation:
+          typeof values.installation === "string" ? values.installation : undefined,
+        developmentRuntime: values["development-runtime"] === true,
+        fake: values.fake === true,
+      })
     case "inference-worker":
       return runInferenceWorkerProcess({
         fake: values.fake === true,

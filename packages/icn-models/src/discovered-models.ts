@@ -212,19 +212,34 @@ export const discoveryRecord = (
   return [id, { installed, model }]
 }
 
+export interface DiscoveredModelsInventory {
+  revision(): number
+  installedPackageSnapshot(): InstalledPackageSnapshot
+  installedPackagesResponse(): {
+    revision: number
+    reconciliationComplete: boolean
+  }
+  ensureModelInventory(): Promise<void>
+}
+
 export class ManagedDiscoveredModels {
-  constructor(
-    private readonly resolver: {
-      revision(): number
-      snapshot(): InstalledPackageSnapshot
-    },
-  ) {}
+  constructor(private readonly inventory: DiscoveredModelsInventory) {}
 
   snapshot() {
+    const installed = this.inventory.installedPackagesResponse()
     return {
-      revision: BigInt(this.resolver.revision()),
-      reconciliationComplete: true,
-      models: discoveredModels(this.resolver.snapshot()),
+      revision: BigInt(installed.revision),
+      reconciliationComplete: installed.reconciliationComplete,
+      models: discoveredModels(this.inventory.installedPackageSnapshot()),
     }
+  }
+
+  async listDiscovered() {
+    return this.snapshot()
+  }
+
+  async refreshDiscovery() {
+    await this.inventory.ensureModelInventory()
+    return this.snapshot()
   }
 }

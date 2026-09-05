@@ -70,10 +70,10 @@
     "icn:parity:test:ts": "bun run --cwd inference parity:test:ts",
     "icn:fit": "bun run --cwd inference fit --",
     "icn:test": "cargo test --manifest-path inference/Cargo.toml --workspace",
-    "icn:dev": "cargo run --manifest-path inference/Cargo.toml -p icn-server -- serve --fake",
+    "icn:dev": "bun run --cwd packages/icn-server start -- serve --fake",
     "icn:serve": "bun run inference/scripts/build-local.ts --serve",
-    "icn:doctor": "cargo run --manifest-path inference/Cargo.toml -p icn-server -- doctor",
-    "icn:version": "cargo run --manifest-path inference/Cargo.toml -p icn-server -- version --json",
+    "icn:doctor": "bun run --cwd packages/icn-server start -- doctor",
+    "icn:version": "bun run --cwd packages/icn-server start -- version --json",
     "icn:catalog:update": "cargo run --manifest-path inference/Cargo.toml -p icn-catalog -- update-lock --output inference/catalog/models.lock.json --model-store ~/.magnitude/models --cache-root ~/.magnitude/cache",
     "icn:catalog:build-bundle": "cargo run --manifest-path inference/Cargo.toml -p icn-catalog -- build-bundle --output inference/target/catalog-inputs/model-planner-inputs.bundle --model-store ~/.magnitude/models --cache-root ~/.magnitude/cache"
   },

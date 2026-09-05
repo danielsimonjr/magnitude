@@ -14,7 +14,7 @@ import {
   verifyAppleDeploymentTarget,
   verifyOwnedLoaderPaths,
 } from "./common"
-import { buildIcnBinary } from "../../../../inference/scripts/compile"
+import { buildTypescriptIcnBinaryBundle } from "./icn-typescript"
 import { inspectCudaCompatibility } from "./cuda"
 
 // Linux toolkits keep runtime .so files in lib64; Windows toolkits keep the runtime DLLs in
@@ -60,10 +60,12 @@ export const buildBackendArtifact = async (
   await rm(output, { recursive: true, force: true })
   await mkdir(output, { recursive: true, mode: 0o700 })
 
-  const icn = await buildIcnBinary({
+  // Backend packs ship native modules only; identity comes from the TypeScript ICN.
+  const icn = await buildTypescriptIcnBinaryBundle({
     target: host.bunTarget,
     profile: `backend-${pack.id}`,
     features: pack.cargoFeatures,
+    compileBinary: false,
     buildEnvironment: {
       ...releaseBuildEnvironment(host),
       ...(pack.backend === "cuda"
@@ -73,9 +75,6 @@ export const buildBackendArtifact = async (
         : {}),
     },
   })
-  if (!icn.identity.backends.includes(pack.backend)) {
-    throw new Error(`${pack.id} build identity does not include ${pack.backend}`)
-  }
   const modules = icn.backendModules.filter(
     (file) => basename(file) === pack.module,
   )

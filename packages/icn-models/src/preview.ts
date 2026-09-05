@@ -47,7 +47,7 @@ interface HubSearchModel {
   tags?: string[]
 }
 
-interface HubModel extends HubSearchModel {
+export interface HubModel extends HubSearchModel {
   cardData?: unknown
   siblings?: HubSibling[]
 }
@@ -182,12 +182,12 @@ export const selectRepositorySnapshotComponents = (
   })
 }
 
-/** Network-backed repository refresh is deferred; callers should inject a snapshot provider in tests. */
-export const refreshHuggingFaceRepository = async (): Promise<never> => {
-  throw new Error(
-    "refreshHuggingFaceRepository requires network integration — inject a snapshot provider in tests",
-  )
-}
+export {
+  refreshHuggingFaceRepository,
+  resolveHuggingFaceRepository,
+  searchHuggingFaceModels,
+  type HuggingFaceHubOptions,
+} from "./catalog-resolve"
 
 export class ModelPreviewService {
   // Full preview orchestration depends on ManagedModelStore network paths; use hub helpers above in tests.

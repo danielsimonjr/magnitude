@@ -11,6 +11,7 @@ export interface InventoryPort {
   catalogAffiliations(): readonly CatalogPackageAffiliation[]
   snapshot(): InstalledPackageSnapshot
   revision(): number
+  ensureModelInventory(): Promise<void>
 }
 
 export class ManagedStoreInventory implements InventoryPort {
@@ -35,5 +36,9 @@ export class ManagedStoreInventory implements InventoryPort {
 
   revision(): number {
     return this.store.revision()
+  }
+
+  async ensureModelInventory(): Promise<void> {
+    await this.store.ensureModelInventory()
   }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { catalogBaseId, catalogVariantId, ModelIdError } from "@magnitudedev/icn-contracts"
 import { type InstalledPackageSnapshot } from "./inventory"
-import { discoveredModels, discoveryRecord, selectedDiscoveredPackages } from "./discovered-models"
+import { discoveredModels, discoveryRecord, ManagedDiscoveredModels, selectedDiscoveredPackages } from "./discovered-models"
 
 describe("discovered-models", () => {
   it("keeps_identical_content_from_different_repositories", () => {
@@ -85,3 +85,73 @@ describe("discovered-models", () => {
     ).toHaveLength(0)
   })
 })
+
+  it("prefers_the_most_recent_distinct_revision_without_a_current_ref", () => {
+    const older = discoveryRecord(
+      "older",
+      "owner/repo",
+      "model.gguf",
+      "commit-a",
+      "commit-a",
+      "package-a",
+      { _tag: "NotCatalogTarget" },
+    )
+    const newerRecord = discoveryRecord(
+      "newer",
+      "owner/repo",
+      "model.gguf",
+      "commit-b",
+      "commit-b",
+      "package-b",
+      { _tag: "NotCatalogTarget" },
+    )
+    const newer = [newerRecord[0], { ...newerRecord[1], model: { ...newerRecord[1].model, updated_at: 2n } }] as const
+    const selected = selectedDiscoveredPackages({
+      records: new Map([older, newer]),
+    })
+    expect(selected.size).toBe(1)
+    const candidate = [...selected.values()][0]!
+    expect(candidate.package.source._tag).toBe("HuggingFace")
+    if (candidate.package.source._tag === "HuggingFace") {
+      expect(candidate.package.source.revision).toBe("commit-b")
+    }
+  })
+
+  it("preserves_failed_catalog_attribution_on_a_ready_discovery", () => {
+    const failed = discoveryRecord(
+      "failed",
+      "owner/repo",
+      "model.gguf",
+      "main",
+      "commit",
+      "package",
+      {
+        _tag: "Failed",
+        failure: {
+          code: "catalog_target_package_ambiguous",
+          message: "ambiguous target",
+          retryable: false,
+        },
+      },
+    )
+    const models = discoveredModels({ records: new Map([failed]) })
+    expect(models).toHaveLength(1)
+    expect(models[0]?.state._tag).toBe("Ready")
+    if (models[0]?.state._tag === "Ready") {
+      expect(models[0].state.catalogAttribution._tag).toBe("Failed")
+    }
+  })
+
+  it("refreshDiscovery reloads inventory before snapshotting", async () => {
+    let ensured = 0
+    const discovered = new ManagedDiscoveredModels({
+      revision: () => 1,
+      installedPackageSnapshot: () => ({ records: new Map() }),
+      installedPackagesResponse: () => ({ revision: 1, reconciliationComplete: true }),
+      ensureModelInventory: async () => {
+        ensured += 1
+      },
+    })
+    await discovered.refreshDiscovery()
+    expect(ensured).toBe(1)
+  })
