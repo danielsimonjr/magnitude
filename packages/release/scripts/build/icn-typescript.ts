@@ -94,11 +94,15 @@ const cmakeFeatureFlags = (
 }
 
 /**
- * CMake only honors CMAKE_* values from the cache / -D flags. Putting them in the
- * process environment alone leaves variables like CMAKE_CUDA_ARCHITECTURES undefined,
- * so llama.cpp falls back to its default arch list (including Hopper/Blackwell), which
- * breaks CUDA 11.8 and Windows CUDA configure.
+ * CMake only honors CMAKE_* values from the cache / -D flags. Environment
+ * alone leaves CMAKE_CUDA_ARCHITECTURES undefined (llama.cpp then enables
+ * Hopper/Blackwell and breaks CUDA 11.8 / Windows CUDA configure).
+ *
+ * CMake `-D` values treat `\` as string escapes (`\P` is invalid). Windows paths
+ * must use forward slashes when passed as defines (argv spaces are fine).
  */
+export const cmakeDefineValue = (value: string): string => value.replaceAll("\\", "/")
+
 export const cmakeDefinesFromEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
 ): readonly string[] =>
@@ -106,7 +110,7 @@ export const cmakeDefinesFromEnvironment = (
     .filter((entry): entry is [string, string] =>
       entry[0].startsWith("CMAKE_") && typeof entry[1] === "string" && entry[1].length > 0)
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => `-D${key}=${value}`)
+    .map(([key, value]) => `-D${key}=${cmakeDefineValue(value)}`)
 
 /**
  * Windows CUDA native builds need MSVC `link.exe` and the Windows SDK `rc.exe`.

@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, test } from "bun:test"
 import {
+  cmakeDefineValue,
   cmakeDefinesFromEnvironment,
   sanitizeWindowsNativeBuildEnv,
   stagingBinaryPath,
@@ -20,6 +21,20 @@ describe("cmakeDefinesFromEnvironment", () => {
     ).toEqual([
       "-DCMAKE_BUILD_TYPE=Release",
       "-DCMAKE_CUDA_ARCHITECTURES=80-virtual;90-virtual",
+    ])
+  })
+
+  test("normalizes Windows backslashes so CMake does not treat them as escapes", () => {
+    expect(cmakeDefineValue("C:\\Program Files (x86)\\Windows Kits\\10\\bin\\rc.exe")).toBe(
+      "C:/Program Files (x86)/Windows Kits/10/bin/rc.exe",
+    )
+    expect(
+      cmakeDefinesFromEnvironment({
+        CMAKE_RC_COMPILER:
+          "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.26100.0\\x64\\rc.exe",
+      }),
+    ).toEqual([
+      "-DCMAKE_RC_COMPILER=C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64/rc.exe",
     ])
   })
 })
