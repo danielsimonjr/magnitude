@@ -75,7 +75,7 @@ describe("preview", () => {
 
   it("search_and_resolve_use_injectable_fetch", async () => {
     const commit = "a".repeat(40)
-    const fetchMock: typeof fetch = async (input) => {
+    const fetchMock = (async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.includes("/api/models?")) {
         return new Response(
@@ -110,7 +110,7 @@ describe("preview", () => {
         )
       }
       return new Response("not found", { status: 404 })
-    }
+    }) as typeof fetch
 
     const search = await searchHuggingFaceModels({ query: "model", limit: 5 }, { fetch: fetchMock })
     expect(search.models).toHaveLength(1)

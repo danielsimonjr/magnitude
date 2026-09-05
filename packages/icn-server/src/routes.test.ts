@@ -29,7 +29,7 @@ describe("management routes", () => {
   const services = createServerServices({
     catalog: minimalRecommendableCatalog(),
     hub: {
-      fetch: async (input) => {
+      fetch: (async (input) => {
         const url = String(input)
         const commit = "c".repeat(40)
         if (url.includes("/api/models?")) {
@@ -65,7 +65,7 @@ describe("management routes", () => {
           )
         }
         return new Response("missing", { status: 404 })
-      },
+      }) as typeof fetch,
     },
   })
   const handler = createHttpHandler({

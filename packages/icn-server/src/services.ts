@@ -231,7 +231,7 @@ const messageText = (content: unknown): string => {
     return content
   }
   if (Option.isOption(content)) {
-    return Option.getOrElse(content, () => "")
+    return String(Option.getOrElse(content, () => ""))
   }
   if (Array.isArray(content)) {
     return content
@@ -283,6 +283,8 @@ const defaultExecutionSettings = () => ({
   tensor_split: Option.none(),
   threads: Option.none(),
   threads_batch: Option.none(),
+  use_mlock: false,
+  use_mmap: true,
 })
 
 const defaultProps = (modelId: string): PropsResponse => ({
@@ -360,7 +362,14 @@ const fakeResponseObject = (body: unknown): ResponseObject => {
     reasoning: { effort: Option.none(), summary: Option.none() },
     store: false,
     temperature: Option.none(),
-    text: { format: { type: "text" } },
+    text: {
+      format: {
+        type: "text",
+        name: Option.none(),
+        schema: Option.none(),
+        strict: Option.none(),
+      },
+    },
     tool_choice: "auto",
     tools: [],
     top_p: Option.none(),
@@ -372,7 +381,7 @@ const fakeResponseObject = (body: unknown): ResponseObject => {
       input_tokens_details: { cached_tokens: 0 },
       output_tokens_details: { reasoning_tokens: 0 },
     },
-  } as ResponseObject
+  } as unknown as ResponseObject
 }
 
 const loadOpenApiDocument = (): unknown => {
