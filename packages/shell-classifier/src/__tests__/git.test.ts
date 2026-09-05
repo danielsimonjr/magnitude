@@ -368,3 +368,30 @@ describe('git classification', () => {
     })
   })
 })
+
+describe('git global options that execute programs (M4)', () => {
+  test('--paginate / -p in global position → not readonly', () => {
+    expect(isGitReadOnly(args('--paginate status'))).toBe(false)
+    expect(isGitReadOnly(args('-p status'))).toBe(false)
+  })
+
+  test('--exec-path (inline or separate) → not readonly', () => {
+    expect(isGitReadOnly(args('--exec-path=/tmp status'))).toBe(false)
+    expect(isGitReadOnly(args('--exec-path /tmp status'))).toBe(false)
+  })
+
+  test('-c / --config-env → not readonly', () => {
+    expect(isGitReadOnly(args('-c core.pager=sh status'))).toBe(false)
+    expect(isGitReadOnly(args('--config-env=core.pager=X status'))).toBe(false)
+  })
+
+  test('-p after the subcommand is a diff flag, still readonly', () => {
+    expect(isGitReadOnly(args('log -p'))).toBe(true)
+    expect(isGitReadOnly(args('--no-pager log'))).toBe(true)
+  })
+
+  test('-o output flag on a subcommand → not readonly (M3)', () => {
+    expect(isGitReadOnly(args('log -o /tmp/x'))).toBe(false)
+    expect(isGitReadOnly(args('diff -o out.patch'))).toBe(false)
+  })
+})

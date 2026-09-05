@@ -6358,6 +6358,13 @@ async fn main() -> anyhow::Result<()> {
             if let Some(model_controller) = model_controller {
                 state = state.with_model_controller(model_controller);
             }
+            if auth_token.is_none() && !bind.ip().is_loopback() {
+                anyhow::bail!(
+                    "refusing to bind {bind} without --auth-token / MAGNITUDE_ICN_AUTH_TOKEN; \
+                     non-loopback binds expose model installation and inference to the network \
+                     and require a capability token"
+                );
+            }
             if let Some(auth_token) = auth_token {
                 state = state.with_authorization(auth_token);
             }

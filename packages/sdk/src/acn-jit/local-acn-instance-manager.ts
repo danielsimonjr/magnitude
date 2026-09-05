@@ -7,6 +7,7 @@ import {
   ProcessGroupController,
   makeAcnOwnerStore,
   SqliteDriver,
+  loadOrCreateAcnRpcToken,
 } from "@magnitudedev/acn-protocol/coordination"
 import { ProcessGroupControllerLive } from "@magnitudedev/acn-protocol/coordination/exact-process"
 import { Effect, Scope, Stream } from "effect"
@@ -58,8 +59,11 @@ export const makeLocalAcnInstanceManagerWithProcessController = (
     Effect.provideService(Path.Path, path),
   )
 
-  const ownerObserver = makeAcnOwnerObserver(owners, processes, http)
-  const shutdownSupervisor = yield* makeAcnDaemonShutdownSupervisor(owners, processes, http)
+  // The token lives in the owner-only data directory; failing to read or mint it
+  // means the data directory itself is unusable, which is not a recoverable state.
+  const rpcToken = yield* Effect.try(() => loadOrCreateAcnRpcToken(dataDirectory)).pipe(Effect.orDie)
+  const ownerObserver = makeAcnOwnerObserver(owners, processes, http, rpcToken)
+  const shutdownSupervisor = yield* makeAcnDaemonShutdownSupervisor(owners, processes, http, rpcToken)
   const launchCommandResolver = makeAcnDaemonLaunchCommandResolver({
     binaryPath: options.binaryPath,
     dataDirectory,

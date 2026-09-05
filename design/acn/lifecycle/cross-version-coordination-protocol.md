@@ -107,7 +107,11 @@ POST http://127.0.0.1:<owner.port>/shutdown
 
 Health contains at least the exact owner PID and the process's revision. HTTP `200` means ready for
 new clients; HTTP `503` means live but not ready. Additional fields are optional diagnostics and
-cannot establish liveness or extend a deadline.
+cannot establish liveness or extend a deadline. Health is the only unauthenticated owner route.
+
+Shutdown, like every other owner route, requires the data directory's RPC bearer token
+(`Authorization: Bearer <token>`); a request without it is refused with `401` and has no effect.
+The token contract is specified in `design/acn/http-security.md`.
 
 A valid health response is authoritative for that observation. A request error, bounded timeout,
 undecodable response, or schema-invalid response is an inconclusive observation, not health state.

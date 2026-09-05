@@ -70,6 +70,10 @@ function findSubcommand(args: string[]): SubcommandResult | null {
 
     const arg = args[i]
 
+    // Global options that can execute programs (pager, custom exec path,
+    // config overrides) are never readonly.
+    if (isExecutingGlobalOption(arg)) return null
+
     // Global options with inline values: --git-dir=/foo, -C/tmp
     if (isGlobalOptionInline(arg)) continue
 
@@ -92,10 +96,23 @@ function findSubcommand(args: string[]): SubcommandResult | null {
   return null
 }
 
+// Git global options that can run external programs or override config.
+// `-p` only means --paginate in global (pre-subcommand) position.
+const EXECUTING_GLOBAL_OPTIONS = new Set([
+  '-p', '--paginate', '--exec-path', '-c', '--config-env',
+])
+
+function isExecutingGlobalOption(arg: string): boolean {
+  if (EXECUTING_GLOBAL_OPTIONS.has(arg)) return true
+  if (arg.startsWith('--exec-path=')) return true
+  if (arg.startsWith('--config-env=')) return true
+  if (arg.startsWith('-c') && arg.length > 2) return true
+  return false
+}
+
 // Git global options that take a separate value argument
 const GLOBAL_OPTIONS_WITH_VALUE = new Set([
-  '-C', '-c', '--config-env', '--exec-path',
-  '--git-dir', '--namespace', '--super-prefix', '--work-tree',
+  '-C', '--git-dir', '--namespace', '--super-prefix', '--work-tree',
 ])
 
 function isGlobalOptionWithValue(arg: string): boolean {
@@ -121,7 +138,7 @@ function isGlobalOptionInline(arg: string): boolean {
 
 // Flags on subcommands that can trigger writes or arbitrary execution
 const UNSAFE_SUBCOMMAND_FLAGS = new Set([
-  '--output', '--ext-diff', '--textconv', '--exec', '--paginate',
+  '--output', '-o', '--ext-diff', '--textconv', '--exec', '--paginate',
 ])
 
 function subcommandArgsReadOnly(args: string[]): boolean {

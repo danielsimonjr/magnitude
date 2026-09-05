@@ -106,34 +106,43 @@ export function AcnIntrospectionRoutes(enabled: boolean) {
   return enabled ? AcnIntrospectionRoutesLive : AcnIntrospectionRoutesDisabled
 }
 
+type IntrospectionHandler<R> = (request: HttpServerRequest) => Effect.Effect<HttpServerResponse.HttpServerResponse, never, R>
+type IntrospectionGuard = <R>(handler: IntrospectionHandler<R>) => IntrospectionHandler<R>
+
+/**
+ * Installs the debug introspection routes. They expose session content, so the
+ * caller supplies `guard` (normally the RPC-token authorizer) and every route is
+ * wrapped in it; nothing here is reachable without it.
+ */
 export const installAcnIntrospectionRoutes = (
   router: HttpLayerRouter.HttpRouter,
   introspector: AcnIntrospectorApi,
+  guard: IntrospectionGuard,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     yield* router.add(
       "GET",
       "/dev/introspection",
-      introspector.currentOverview.pipe(Effect.flatMap(json)),
+      guard(() => introspector.currentOverview.pipe(Effect.flatMap(json))),
     )
-    yield* router.add("GET", "/dev/sessions", introspector.currentOverview.pipe(
+    yield* router.add("GET", "/dev/sessions", guard(() => introspector.currentOverview.pipe(
       Effect.flatMap((overview) => json({
         sessions: overview.sessions,
         timestamp: overview.timestamp,
       })),
-    ))
+    )))
     yield* router.add(
       "GET",
       "/dev/sessions/:sessionId",
-      (request) => currentSessionResponse(request).pipe(
+      guard((request) => currentSessionResponse(request).pipe(
         Effect.provideService(AcnIntrospector, introspector),
-      ),
+      )),
     )
     yield* router.add(
       "GET",
       "/dev/sessions/:sessionId/stream",
-      (request) => sessionChangesResponse(request).pipe(
+      guard((request) => sessionChangesResponse(request).pipe(
         Effect.provideService(AcnIntrospector, introspector),
-      ),
+      )),
     )
   })

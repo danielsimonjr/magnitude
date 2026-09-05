@@ -46,7 +46,7 @@ describe("AcnDaemonShutdownSupervisor", () => {
         group,
         message: "SystemError: kill() failed: EPERM: Operation not permitted",
       })))
-      const supervisor = yield* makeAcnDaemonShutdownSupervisor(makeOwnerStore(owner), processes, http)
+      const supervisor = yield* makeAcnDaemonShutdownSupervisor(makeOwnerStore(owner), processes, http, "test-token")
       const result = yield* supervisor.shutdown(expected, "HealthUnavailable").pipe(Effect.either)
       expect(shutdownRequests).toBe(1)
       expect(result).toMatchObject({
@@ -76,7 +76,7 @@ describe("AcnDaemonShutdownSupervisor", () => {
         stops += 1
         return new ProcessGroupStopped({ group: target })
       }))
-      const supervisor = yield* makeAcnDaemonShutdownSupervisor(makeOwnerStore(owner), processes, http)
+      const supervisor = yield* makeAcnDaemonShutdownSupervisor(makeOwnerStore(owner), processes, http, "test-token")
       const result = yield* supervisor.shutdown(expected, "HealthUnavailable")
       expect(result).toMatchObject({
         _tag: "AcnDaemonSuperseded",

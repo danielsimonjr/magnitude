@@ -1,3 +1,4 @@
+import { acnRpcAuthorizationHeader } from "@magnitudedev/acn-protocol/coordination"
 import { RpcClient, RpcClientError, RpcSerialization } from "@effect/rpc"
 import type { FromClientEncoded, ResponseExitEncoded } from "@effect/rpc/RpcMessage"
 import * as HttpBody from "@effect/platform/HttpBody"
@@ -35,6 +36,7 @@ const EndpointRetired: AttemptOutcome = { _tag: "EndpointRetired" }
 interface RpcEndpoint {
   readonly id: string
   readonly url: string
+  readonly rpcToken: string
 }
 
 export interface RecoveringProtocolOptions<InfraError, Endpoint extends RpcEndpoint = RpcEndpoint> {
@@ -99,7 +101,10 @@ export const makeRecoveringProtocol = <InfraError, Endpoint extends RpcEndpoint 
                 const response = yield* client
                   .post(`${endpoint.url}${options.rpcPath}`, {
                     body,
-                    headers: { "x-magnitude-acn-id": endpoint.id },
+                    headers: {
+                      "x-magnitude-acn-id": endpoint.id,
+                      ...acnRpcAuthorizationHeader(endpoint.rpcToken),
+                    },
                   })
                   .pipe(
                     Effect.mapError(

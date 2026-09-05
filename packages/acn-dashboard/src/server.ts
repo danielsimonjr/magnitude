@@ -1,11 +1,12 @@
 import { readdir, readFile, rm } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
 import { Schema } from 'effect'
 import {
   AcnVersionRegistryJson,
   type AcnRegistration,
 } from '@magnitudedev/acn-protocol'
+import { acnRpcAuthorizationHeader, loadOrCreateAcnRpcToken } from '@magnitudedev/acn-protocol/coordination'
 import type { AcnInfo, KillAllAcnResult, RpcTraceSummary } from './lib/types'
 
 const PORT = Number(process.env.ACN_DASH_API_PORT ?? 4886)
@@ -15,10 +16,17 @@ const ACN_DIR = join(DATA_DIR, 'acn')
 const DIST_DIR = join(import.meta.dir, '..', 'dist')
 const decodeRegistry = Schema.decodeUnknownSync(AcnVersionRegistryJson)
 
+const UI_PORT = Number(process.env.ACN_DASH_UI_PORT ?? 4887)
+const ALLOWED_ORIGINS = new Set([`http://localhost:${UI_PORT}`, `http://127.0.0.1:${UI_PORT}`])
+const LOCAL_HOST = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/
+// Registrations are read from user-writable files; only ever proxy to loopback.
+const LOOPBACK_URL = /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d+$/
+
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': `http://localhost:${UI_PORT}`,
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
+  'Vary': 'Origin',
 }
 
 function json(body: unknown, init?: ResponseInit): Response {
@@ -35,7 +43,9 @@ async function readRegistration(path: string): Promise<AcnRegistration | null> {
   try {
     const text = await readFile(path, 'utf8')
     if (text.trim().length === 0) return null
-    return decodeRegistry(text).registration
+    const registration = decodeRegistry(text).registration
+    if (!LOOPBACK_URL.test(registration.url)) return null
+    return registration
   } catch {
     return null
   }
@@ -53,11 +63,21 @@ async function removeStaleRegistration(registryPath: string): Promise<void> {
   await rm(dirname(registryPath), { recursive: false }).catch(() => undefined)
 }
 
+// Introspection routes require the daemon's RPC bearer token; the dashboard runs as the
+// same user, so it reads the token from the data directory and attaches it.
+const rpcAuthorization = (): Record<string, string> => {
+  try {
+    return acnRpcAuthorizationHeader(loadOrCreateAcnRpcToken(DATA_DIR))
+  } catch {
+    return {}
+  }
+}
+
 async function fetchJson(url: string, timeoutMs = 800): Promise<unknown> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetch(url, { signal: controller.signal })
+    const response = await fetch(url, { signal: controller.signal, headers: rpcAuthorization() })
     if (!response.ok) {
       throw new Error(`${response.status} ${response.statusText}`)
     }
@@ -258,7 +278,7 @@ async function proxyJson(version: string, suffix: string): Promise<Response> {
     }, { status: 404 })
   }
 
-  const response = await fetch(upstreamUrl(acn, suffix))
+  const response = await fetch(upstreamUrl(acn, suffix), { headers: rpcAuthorization() })
   const body = await response.text()
   return new Response(body, {
     status: response.status,
@@ -280,7 +300,7 @@ async function proxyStream(version: string, suffix: string): Promise<Response> {
     }, { status: 404 })
   }
 
-  const response = await fetch(upstreamUrl(acn, suffix))
+  const response = await fetch(upstreamUrl(acn, suffix), { headers: rpcAuthorization() })
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -298,6 +318,13 @@ const server = Bun.serve({
   async fetch(req) {
     const url = new URL(req.url)
     const path = url.pathname
+
+    // Loopback-only API: reject DNS-rebinding hosts and cross-site writes.
+    const host = req.headers.get('host')
+    if (host === null || !LOCAL_HOST.test(host)) return new Response('Invalid Host header', { status: 421 })
+    const origin = req.headers.get('origin')
+    if (origin !== null && !ALLOWED_ORIGINS.has(origin)) return new Response('Forbidden', { status: 403 })
+    if (req.method === 'POST' && origin === null) return new Response('Forbidden', { status: 403 })
 
     if (req.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders })
@@ -351,7 +378,7 @@ const server = Bun.serve({
     try {
       const filePath = path === '/' ? '/index.html' : path
       const resolved = resolve(DIST_DIR, '.' + filePath)
-      if (!resolved.startsWith(DIST_DIR)) return new Response('Forbidden', { status: 403 })
+      if (resolved !== DIST_DIR && !resolved.startsWith(DIST_DIR + sep)) return new Response('Forbidden', { status: 403 })
       const file = Bun.file(resolved)
       if (await file.exists()) return new Response(file)
       const index = Bun.file(join(DIST_DIR, 'index.html'))

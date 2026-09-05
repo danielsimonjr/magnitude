@@ -29,6 +29,9 @@ export const DesktopRpcChannel = {
   response: "__magnitude:desktop-rpc:response",
 } as const
 
+/** Flat filename-safe key; mirrors the main-process check so traversal is rejected at the schema. */
+const StorageKey = Schema.String.pipe(Schema.pattern(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/))
+
 const Unit = Schema.Struct({})
 
 export class DesktopRpcError extends Schema.TaggedError<DesktopRpcError>()(
@@ -52,17 +55,17 @@ export const DesktopRpcs = RpcGroup.make(
     stream: true,
   }),
   Rpc.make("StorageGet", {
-    payload: Schema.Struct({ key: Schema.String }),
+    payload: Schema.Struct({ key: StorageKey }),
     success: Schema.NullOr(Schema.String),
     error: DesktopRpcError,
   }),
   Rpc.make("StorageSet", {
-    payload: Schema.Struct({ key: Schema.String, value: Schema.String }),
+    payload: Schema.Struct({ key: StorageKey, value: Schema.String }),
     success: Unit,
     error: DesktopRpcError,
   }),
   Rpc.make("StorageRemove", {
-    payload: Schema.Struct({ key: Schema.String }),
+    payload: Schema.Struct({ key: StorageKey }),
     success: Unit,
     error: DesktopRpcError,
   }),

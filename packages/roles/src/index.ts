@@ -7,10 +7,15 @@ export {
   denyForbiddenCommands,
   denyMutatingGit,
   denyWritesOutside,
+  denyWritesToProtectedPaths,
   denyMassDestructiveIn,
   allowAll,
   evaluatePolicy,
 } from './policy'
+
+// Path confinement (shared with the agent's filesystem tools)
+export { resolvePhysicalPath, isPhysicallyWithin, escapesViaSymlink, touchesProtectedPath } from './path-confinement'
+export { magnitudeProtectedPaths, stripMagnitudeSecrets } from './protected-paths'
 
 // Prompt
 export { definePrompt } from './prompt'

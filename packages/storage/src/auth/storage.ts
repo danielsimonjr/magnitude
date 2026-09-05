@@ -11,8 +11,10 @@ import type { AuthStorageShape } from "./contracts";
 
 function normalizeAuthData(data: unknown): Record<string, AuthInfo> {
   if (typeof data !== "object" || data === null) return {};
-  const result: Record<string, AuthInfo> = {};
+  const result: Record<string, AuthInfo> = Object.create(null);
   for (const [key, value] of Object.entries(data)) {
+    // A "__proto__" key would set the prototype instead of a property.
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
     if (isValidAuthInfo(value)) {
       result[key] = value;
     }

@@ -9,6 +9,8 @@ import {
 import { expandScratchpadPath } from '@magnitudedev/scratchpad'
 import type { ExecuteHookContext, InterceptorDecision } from '@magnitudedev/harness'
 import type { PolicyRule, PolicyContext } from './types'
+import { isPhysicallyWithin, touchesProtectedPath } from './path-confinement'
+import { magnitudeProtectedPaths, stripMagnitudeSecrets } from './protected-paths'
 
 type FullContext = ExecuteHookContext & { policyContext: PolicyContext }
 
@@ -17,7 +19,7 @@ const deny = (message: string): InterceptorDecision<string> => ({ _tag: 'Deny', 
 
 function agentEnv(cwd: string, scratchpadPath: string): Record<string, string> {
   return {
-    ...(process.env as Record<string, string>),
+    ...stripMagnitudeSecrets(process.env),
     NO_COLOR: '1',
     PROJECT_ROOT: cwd,
     M: scratchpadPath,
@@ -78,9 +80,35 @@ export function denyWritesOutside(
       if (!isPathWithin(fullPath, env, ...roots)) {
         return Effect.succeed(deny('Cannot write files outside allowed directories'))
       }
+      // Lexical check passed; make sure a symlink is not redirecting the write
+      // outside every root (roots + the built-in /tmp allowance).
+      if (!isPhysicallyWithin(fullPath, [...roots, '/tmp'])) {
+        return Effect.succeed(deny('Cannot write files outside allowed directories (symlink escapes allowed roots)'))
+      }
       return Effect.succeed(null)
     }
 
+    return Effect.succeed(null)
+  }
+}
+
+/**
+ * Deny file writes (write/edit tools) that land on host-trusted paths under
+ * `~/.magnitude` (see `magnitudeProtectedPaths`). Applies regardless of
+ * disableCwdSafeguards: these files are executed or injected by the host.
+ */
+export function denyWritesToProtectedPaths(
+  getPaths: (ctx: PolicyContext) => string[] = () => magnitudeProtectedPaths(),
+): PolicyRule {
+  return (ctx: FullContext) => {
+    if (ctx.toolKey !== 'fileWrite' && ctx.toolKey !== 'fileEdit') return Effect.succeed(null)
+    const { policyContext } = ctx
+    const input = ctx.input as { path: string }
+    const { path: expandedPath } = expandScratchpadPath(input.path, policyContext.scratchpadPath)
+    const fullPath = resolve(policyContext.cwd, expandedPath)
+    if (touchesProtectedPath(fullPath, getPaths(policyContext))) {
+      return Effect.succeed(deny('Cannot write to protected Magnitude paths'))
+    }
     return Effect.succeed(null)
   }
 }

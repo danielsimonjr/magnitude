@@ -9,8 +9,7 @@
     "./contracts": "./src/contracts.ts",
     "./executables": "./src/executables.ts",
     "./acquisition": "./src/acquisition.ts",
-    "./launcher": "./src/launcher.ts",
-    "./trust": "./src/trust.ts"
+    "./launcher": "./src/launcher.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

@@ -11,7 +11,7 @@
  * the renderer SDK opens the ACN RPC connection directly to the endpoint
  * returned by that service.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, type MenuItemConstructorOptions } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, type MenuItemConstructorOptions } from "electron"
 import * as nodePath from "node:path"
 import * as nodeFs from "node:fs"
 import { fileURLToPath } from "node:url"
@@ -204,7 +204,12 @@ try {
   nodeFs.mkdirSync(storageDir, { recursive: true })
 } catch {}
 
+// Storage keys come from the renderer over IPC; confine them to a flat, safe
+// filename so a hostile key such as `../../.zshrc` cannot escape storageDir.
+const SAFE_STORAGE_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+
 function storageFile(key: string): string {
+  if (!SAFE_STORAGE_KEY.test(key)) throw new Error(`Invalid storage key: ${key}`)
   return nodePath.join(storageDir, `${key}.json`)
 }
 
@@ -354,10 +359,29 @@ function createWindow(): void {
       preload: nodePath.join(__dirname, "../preload/preload.mjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
+      webviewTag: false,
       backgroundThrottling: false,
     },
   })
+
+  // Rendered markdown (model output, README content) can carry arbitrary link
+  // targets. Never let them open a window that inherits this renderer's preload
+  // bridge, and never let the main document navigate away from the app itself.
+  const rendererUrl = process.env["ELECTRON_RENDERER_URL"]
+  const isAppUrl = (url: string): boolean =>
+    url.startsWith("file://") || (rendererUrl !== undefined && url.startsWith(rendererUrl))
+  const isExternalUrl = (url: string): boolean => /^(?:https?:|mailto:)/i.test(url)
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isExternalUrl(url)) void shell.openExternal(url)
+    return { action: "deny" }
+  })
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (isAppUrl(url)) return
+    event.preventDefault()
+    if (isExternalUrl(url)) void shell.openExternal(url)
+  })
+  mainWindow.webContents.on("will-attach-webview", (event) => event.preventDefault())
 
   const browserWindow = mainWindow
   embeddedBrowserRuntime = ManagedRuntime.make(makeEmbeddedBrowserLive(browserWindow))
@@ -378,7 +402,7 @@ function createWindow(): void {
       responseHeaders: {
         ...details.responseHeaders,
         "Content-Security-Policy": [
-          `default-src 'self'; ${scriptSrc}; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; ${connectSrc}`,
+          `default-src 'self'; ${scriptSrc}; style-src 'self' 'unsafe-inline'; img-src 'self' data: http://127.0.0.1:* http://localhost:*; font-src 'self' data:; ${connectSrc}`,
         ],
       },
     })

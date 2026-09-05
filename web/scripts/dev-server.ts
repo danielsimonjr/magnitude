@@ -99,7 +99,16 @@ const vite = await createViteServer({
   server: { middlewareMode: true },
 })
 
+const LOCAL_HOST = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/
+
 const server = createServer(async (req, res) => {
+  // Loopback-only dev server; refuse DNS-rebinding style requests with a foreign Host.
+  const host = req.headers.host
+  if (host === undefined || !LOCAL_HOST.test(host)) {
+    res.writeHead(421, { "Content-Type": "text/plain" })
+    res.end("Invalid Host header")
+    return
+  }
   const url = new URL(req.url!, `http://localhost:${PORT}`)
 
   // ── ACN process operations ──────────────────────────────────────
@@ -190,7 +199,7 @@ const server = createServer(async (req, res) => {
   vite.middlewares(req, res)
 })
 
-server.listen(PORT, () => {
+server.listen(PORT, "127.0.0.1", () => {
   console.log(`[dev] Server running at http://localhost:${PORT}`)
 })
 

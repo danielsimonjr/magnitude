@@ -130,6 +130,7 @@ export const makeAcnOwnerObserver = (
   owners: AcnOwnerStore,
   processes: ProcessGroupController,
   http: HttpClient.HttpClient,
+  rpcToken: string,
 ): AcnOwnerObserver => {
   const readCurrentOwner = owners.current.pipe(
     Effect.mapError((error) => error._tag === "AcnProcessStoreInvalid"
@@ -218,6 +219,7 @@ export const makeAcnOwnerObserver = (
       id: health.id,
       identity: health.version,
       url: `http://127.0.0.1:${owner.port}`,
+      rpcToken,
       pid: owner.pid,
       processStartIdentity: owner.processStartIdentity,
       lifecycle: new AcnReady({}),

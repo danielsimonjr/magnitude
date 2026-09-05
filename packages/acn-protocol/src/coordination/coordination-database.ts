@@ -141,7 +141,8 @@ export const makeAcnCoordinationDatabase = (
   const withConnection = <A>(
     use: (connection: SqliteConnection) => Effect.Effect<A, AcnProcessStoreError>,
   ): Effect.Effect<A, AcnProcessStoreError> => Effect.scoped(Effect.gen(function* () {
-    yield* fs.makeDirectory(directory, { recursive: true }).pipe(
+    // Owner-only: the coordination directory also holds the RPC token.
+    yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 }).pipe(
       Effect.mapError((error) => new AcnProcessStoreUnavailable({
         path: directory,
         message: String(error),

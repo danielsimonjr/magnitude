@@ -45,6 +45,7 @@ import {
   type AcnOwnerStoreError,
   type AcnOwnerStore,
   type ExactProcess,
+  loadOrCreateAcnRpcToken,
 } from "@magnitudedev/acn-protocol/coordination"
 import { BunSqliteDriverLayer } from "@magnitudedev/acn-protocol/coordination/bun"
 import { ProcessGroupControllerLive } from "@magnitudedev/acn-protocol/coordination/exact-process"
@@ -102,6 +103,7 @@ import {
   ACN_INSTANCE_ID,
   makeHealthResponse,
 } from "./identity"
+import { makeAcnHttpSecurity, type AcnHttpSecurity } from "./http-security"
 import { AcnChangesLive, AcnStorageChangesLive } from "./changes"
 import { AcnSubscriptions, AcnSubscriptionsLive } from "./acn-subscriptions"
 import { makeAcnSubscriptionProtocol } from "./acn-subscription-protocol"
@@ -211,12 +213,6 @@ const acnServerUrl = (address: HttpServer.Address): string => {
   return `http://${hostname}:${address.port}`
 }
 
-const CORS_ALLOWED_HEADERS =
-  "Accept, Authorization, Content-Type, Content-Length, Magnitude-Include-Progress, anthropic-version, anthropic-beta, x-api-key, x-magnitude-acn-id, traceparent, tracestate, baggage, b3, x-b3-traceid, x-b3-spanid, x-b3-parentspanid, x-b3-sampled, x-b3-flags"
-const LOCAL_HTTP_ORIGIN =
-  /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/
-const LOCAL_HTTP_HOST = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/
-
 const closeApplication = (scope: Scope.CloseableScope) =>
   Scope.close(scope, Exit.void).pipe(
     Effect.disconnect,
@@ -233,50 +229,7 @@ const boundedShutdownStep = (
   Effect.asVoid,
 )
 
-function isAllowedCorsOrigin(origin: string): boolean {
-  return (
-    LOCAL_HTTP_ORIGIN.test(origin) || origin === "file://" || origin === "null"
-  )
-}
-
-function corsHeadersFor(
-  request: HttpServerRequest.HttpServerRequest
-): Record<string, string> | null {
-  const origin = request.headers.origin
-  if (!origin || !isAllowedCorsOrigin(origin)) return null
-
-  return {
-    "access-control-allow-origin": origin,
-    "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
-    "access-control-allow-headers": CORS_ALLOWED_HEADERS,
-    "access-control-expose-headers": "request-id, x-request-id",
-    "access-control-max-age": "86400",
-    vary: "Origin",
-  }
-}
-
-function withCors(
-  response: HttpServerResponse.HttpServerResponse,
-  request: HttpServerRequest.HttpServerRequest
-) {
-  const headers = corsHeadersFor(request)
-  return headers ? HttpServerResponse.setHeaders(response, headers) : response
-}
-
-const disallowedCorsResponse = HttpServerResponse.empty({ status: 403 })
 const encodeHealthResponse = Schema.encode(AcnHealthResponseSchema)
-
-// OPTIONS preflight handler — catches all OPTIONS requests.
-const OptionsRouteHandler = (request: HttpServerRequest.HttpServerRequest) => {
-  const headers = corsHeadersFor(request)
-  if (!headers) return Effect.succeed(disallowedCorsResponse)
-  return Effect.succeed(
-    HttpServerResponse.setHeaders(
-      HttpServerResponse.empty({ status: 204 }),
-      headers
-    )
-  )
-}
 
 const AcnProcessHandlersLive = Layer.scopedDiscard(
   Effect.gen(function* () {
@@ -622,6 +575,7 @@ const makeCodexWebSocketProxy = (
 const makeInferenceProxy = (
   icn: Context.Tag.Service<typeof IcnProcess>,
   protocol: "openai" | "anthropic" | "codex" | "claude-code",
+  security: AcnHttpSecurity,
 ) => {
   const anthropicGateway = protocol === "claude-code"
     ? makeAnthropicGateway(icn)
@@ -630,7 +584,7 @@ const makeInferenceProxy = (
   return (request: HttpServerRequest.HttpServerRequest) => Effect.gen(function* () {
     // The wildcard proxy route is also the most specific OPTIONS route. Handle
     // browser preflight locally instead of forwarding it to an ICN operation.
-    if (request.method === "OPTIONS") return yield* OptionsRouteHandler(request)
+    if (request.method === "OPTIONS") return yield* security.publicPreflight(request)
     const source = request.source
     if (!(source instanceof Request)) {
       return HttpServerResponse.text("Unsupported request transport", { status: 500 })
@@ -694,6 +648,12 @@ export const launchAcnServer = (options: AcnServerOptions = {}) =>
     const debug = options.debug === true
     const parentBinding = yield* makeParentBinding(options.parentBound === true)
 
+    const rpcToken = yield* Effect.try({
+      try: () => loadOrCreateAcnRpcToken(dataDir),
+      catch: (cause) => new AcnBootstrapRejected({
+        reason: `Unable to read or create the RPC token: ${cause instanceof Error ? cause.message : String(cause)}`,
+      }),
+    })
     const ownerStore = yield* makeAcnOwnerStore(dataDir).pipe(
       Effect.provide(Layer.merge(BunFileSystem.layer, BunPath.layer)),
     )
@@ -718,15 +678,10 @@ export const launchAcnServer = (options: AcnServerOptions = {}) =>
       return yield* new AcnBootstrapRejected({ reason: "ACN requires a loopback TCP endpoint" })
     }
 
-    yield* router.addGlobalMiddleware((responseEffect) => Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest
-      const host = request.headers.host
-      if (host === undefined || !LOCAL_HTTP_HOST.test(host)) {
-        return HttpServerResponse.text("Invalid Host header", { status: 421 })
-      }
-      return withCors(yield* responseEffect, request)
-    }))
-    yield* router.add("OPTIONS", "/*", OptionsRouteHandler)
+    const security = makeAcnHttpSecurity({ rpcToken, instanceId: ACN_INSTANCE_ID })
+    yield* security.secureCoordinationRouter(router)
+    // `/health` is the only unauthenticated coordination route: clients use it
+    // to discover version, revision, and instance id before they hold a token.
     yield* router.add("GET", "/health", lifecycle.state.pipe(
       Effect.flatMap((state) => encodeHealthResponse(makeHealthResponse(ACN_VERSION, state)).pipe(
         Effect.flatMap((body) => HttpServerResponse.json(body, {
@@ -735,14 +690,11 @@ export const launchAcnServer = (options: AcnServerOptions = {}) =>
       )),
       Effect.orDie,
     ))
-    yield* router.add("POST", "/rpc", Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest
-      return request.headers["x-magnitude-acn-id"] === ACN_INSTANCE_ID
-        ? yield* lifecycle.dispatchRpc
-        : HttpServerResponse.empty({ status: 409 })
-    }))
-    yield* router.add("POST", "/shutdown", lifecycle.beginStopping({ reason: "administrative" }).pipe(
-      Effect.as(HttpServerResponse.empty({ status: 202 })),
+    yield* router.add("POST", "/rpc", security.authorizer.requireTokenAndInstance(lifecycle.dispatchRpc))
+    yield* router.add("POST", "/shutdown", security.authorizer.requireToken(
+      lifecycle.beginStopping({ reason: "administrative" }).pipe(
+        Effect.as(HttpServerResponse.empty({ status: 202 })),
+      ),
     ))
     yield* server.serve(router.asHttpEffect()).pipe(Effect.provide(infrastructure))
 
@@ -805,7 +757,7 @@ export const launchAcnServer = (options: AcnServerOptions = {}) =>
         Effect.forkIn(applicationScope),
       )
       if (Option.isSome(builtServices.introspector)) {
-        yield* installAcnIntrospectionRoutes(router, builtServices.introspector.value)
+        yield* installAcnIntrospectionRoutes(router, builtServices.introspector.value, security.authorizer.requireToken)
       }
       const icn = Context.get(applicationContext, IcnProcess)
       const publicInfrastructure = yield* Layer.buildWithScope(
@@ -814,15 +766,7 @@ export const launchAcnServer = (options: AcnServerOptions = {}) =>
       )
       const publicRouter = Context.get(publicInfrastructure, HttpLayerRouter.HttpRouter)
       const publicServer = Context.get(publicInfrastructure, HttpServer.HttpServer)
-      yield* publicRouter.addGlobalMiddleware((responseEffect) => Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest
-        const host = request.headers.host
-        if (host === undefined || !LOCAL_HTTP_HOST.test(host)) {
-          return HttpServerResponse.text("Invalid Host header", { status: 421 })
-        }
-        return withCors(yield* responseEffect, request)
-      }))
-      yield* publicRouter.add("OPTIONS", "/*", OptionsRouteHandler)
+      yield* security.securePublicRouter(publicRouter)
       yield* publicRouter.add("GET", "/health", lifecycle.state.pipe(
         Effect.flatMap((state) => encodeHealthResponse(makeHealthResponse(ACN_VERSION, state)).pipe(
           Effect.flatMap((body) => HttpServerResponse.json(body, {
@@ -834,22 +778,22 @@ export const launchAcnServer = (options: AcnServerOptions = {}) =>
       yield* publicRouter.prefixed("/inference/v1/proxies/codex").add(
         "*",
         "/*",
-        makeInferenceProxy(icn, "codex"),
+        makeInferenceProxy(icn, "codex", security),
       )
       yield* publicRouter.prefixed("/inference/v1").add(
         "*",
         "/*",
-        makeInferenceProxy(icn, "openai"),
+        makeInferenceProxy(icn, "openai", security),
       )
       yield* publicRouter.prefixed("/inference/anthropic/proxies/claude-code").add(
         "*",
         "/*",
-        makeInferenceProxy(icn, "claude-code"),
+        makeInferenceProxy(icn, "claude-code", security),
       )
       yield* publicRouter.prefixed("/inference/anthropic").add(
         "*",
         "/*",
-        makeInferenceProxy(icn, "anthropic"),
+        makeInferenceProxy(icn, "anthropic", security),
       )
       yield* publicServer.serve(publicRouter.asHttpEffect()).pipe(Effect.provide(publicInfrastructure))
       yield* lifecycle.becomeReady(rpcRouter.asHttpEffect().pipe(Effect.orDie))

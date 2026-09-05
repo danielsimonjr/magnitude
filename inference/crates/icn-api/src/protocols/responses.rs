@@ -1735,7 +1735,12 @@ pub(crate) async fn responses_websocket(
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    upgrade.on_upgrade(move |socket| serve_responses_websocket(socket, state, headers))
+    upgrade
+        // Mirror the HTTP body ceiling so a WebSocket frame cannot exceed what
+        // the REST surface would accept; every Text message is fully materialised.
+        .max_message_size(crate::media::MAX_HTTP_BODY_BYTES)
+        .max_frame_size(crate::media::MAX_HTTP_BODY_BYTES)
+        .on_upgrade(move |socket| serve_responses_websocket(socket, state, headers))
 }
 
 async fn send_websocket_value(socket: &mut WebSocket, value: Value) -> bool {
@@ -1826,8 +1831,40 @@ fn warmup_events(id: &str) -> [Value; 2] {
     ]
 }
 
+/// Upper bounds on the per-connection `previous_response_id` history. Each entry
+/// stores the full logical request (previous input plus the increment), so
+/// without eviction a long-lived socket grows quadratically with turn count.
+const MAX_WS_HISTORY_ENTRIES: usize = 32;
+const MAX_WS_HISTORY_BYTES: usize = 32 * 1024 * 1024;
+
+#[derive(Default)]
+struct WebSocketHistory {
+    entries: HashMap<String, Value>,
+    order: std::collections::VecDeque<String>,
+    bytes: usize,
+}
+
+impl WebSocketHistory {
+    fn remember(&mut self, id: String, logical: Value) {
+        let size = logical.to_string().len();
+        while !self.order.is_empty()
+            && (self.order.len() >= MAX_WS_HISTORY_ENTRIES
+                || self.bytes + size > MAX_WS_HISTORY_BYTES)
+        {
+            if let Some(oldest) = self.order.pop_front() {
+                if let Some(evicted) = self.entries.remove(&oldest) {
+                    self.bytes = self.bytes.saturating_sub(evicted.to_string().len());
+                }
+            }
+        }
+        self.bytes += size;
+        self.order.push_back(id.clone());
+        self.entries.insert(id, logical);
+    }
+}
+
 async fn serve_responses_websocket(mut socket: WebSocket, state: AppState, headers: HeaderMap) {
-    let mut history = HashMap::<String, Value>::new();
+    let mut history = WebSocketHistory::default();
     while let Some(message) = socket.next().await {
         let sequence = AtomicU64::new(0);
         let request = match message {
@@ -1852,7 +1889,7 @@ async fn serve_responses_websocket(mut socket: WebSocket, state: AppState, heade
                 continue;
             }
         };
-        let (logical, generate) = match websocket_logical_request(request, &history) {
+        let (logical, generate) = match websocket_logical_request(request, &history.entries) {
             Ok(request) => request,
             Err(error) => {
                 let error = ApiError::invalid(error);
@@ -1869,7 +1906,7 @@ async fn serve_responses_websocket(mut socket: WebSocket, state: AppState, heade
                     return;
                 }
             }
-            history.insert(id, logical);
+            history.remember(id, logical);
             continue;
         }
         let request = match serde_json::from_value::<ResponseCreateRequest>(logical.clone()) {
@@ -1897,7 +1934,7 @@ async fn serve_responses_websocket(mut socket: WebSocket, state: AppState, heade
                 return;
             }
         }
-        history.insert(id, logical);
+        history.remember(id, logical);
     }
 }
 

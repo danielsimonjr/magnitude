@@ -4,7 +4,7 @@
  */
 
 import * as cheerio from 'cheerio';
-import { IGNORED_TAGS, NAVIGATION_TAGS } from './mappings';
+import { HIDDEN_CONTENT_SELECTORS, IGNORED_TAGS, NAVIGATION_TAGS, isHiddenByInlineStyle } from './mappings';
 import type { PartitionOptions } from './types';
 
 export class DOMCleaner {
@@ -20,6 +20,9 @@ export class DOMCleaner {
   clean($: cheerio.CheerioAPI): cheerio.CheerioAPI {
     // Remove script, style, and other unwanted tags
     this.removeIgnoredTags($);
+
+    // Remove content invisible to a reader (prompt-injection carrier)
+    this.removeHiddenContent($);
     
     // Remove navigation elements if requested
     if (this.options.skipNavigation) {
@@ -62,6 +65,23 @@ export class DOMCleaner {
     $('*').contents().filter(function() {
       return this.type === 'comment';
     }).remove();
+  }
+
+  /**
+   * Remove elements hidden from the reader: `hidden`, `aria-hidden="true"`,
+   * inline `display:none` / `visibility:hidden`, and `<template>`.
+   */
+  private removeHiddenContent($: cheerio.CheerioAPI): void {
+    HIDDEN_CONTENT_SELECTORS.forEach(selector => {
+      $(selector).remove();
+    });
+
+    $('[style]').each((_, element) => {
+      const $el = $(element);
+      if (isHiddenByInlineStyle($el.attr('style'))) {
+        $el.remove();
+      }
+    });
   }
 
   /**

@@ -40,11 +40,18 @@ export const HttpHeaderValueSchema = Schema.String.pipe(
   Schema.brand('HttpHeaderValue'),
 )
 
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
+
+/** Credentials are attached to every request, so cleartext HTTP is only allowed to loopback. */
+const isTransportAcceptable = (url: URL): boolean =>
+  url.protocol === 'https:'
+  || (url.protocol === 'http:' && (LOOPBACK_HOSTNAMES.has(url.hostname) || /^127\.\d+\.\d+\.\d+$/.test(url.hostname)))
+
 export const HttpBaseUrlSchema = Schema.String.pipe(
   Schema.filter((value) => {
     try {
       const url = new URL(value)
-      return (url.protocol === 'http:' || url.protocol === 'https:')
+      return isTransportAcceptable(url)
         && url.username === ''
         && url.password === ''
         && url.search === ''
@@ -54,7 +61,7 @@ export const HttpBaseUrlSchema = Schema.String.pipe(
       return false
     }
   }, {
-    message: () => 'baseUrl must be an HTTP(S) API root without credentials, query, fragment, or /chat/completions',
+    message: () => 'baseUrl must be an HTTPS API root (plain HTTP only for loopback hosts) without credentials, query, fragment, or /chat/completions',
   }),
   Schema.brand('HttpBaseUrl'),
 )

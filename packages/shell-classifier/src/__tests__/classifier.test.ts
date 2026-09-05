@@ -171,17 +171,17 @@ describe('shell-classifier', () => {
   })
 
   describe('awk', () => {
-    test('awk is readonly', () => {
-      expect(classifyShellCommand("awk '{print $1}'").tier).toBe('readonly')
-      expect(classifyShellCommand("awk '{print $1}' file.txt").tier).toBe('readonly')
+    // awk can execute programs via system() / pipes, so it is never readonly.
+    test('awk is normal (can execute programs)', () => {
+      expect(classifyShellCommand("awk '{print $1}'").tier).toBe('normal')
+      expect(classifyShellCommand("awk '{print $1}' file.txt").tier).toBe('normal')
+      expect(classifyShellCommand(`awk 'BEGIN{system("git push")}'`).tier).not.toBe('readonly')
     })
 
-    test('gawk is readonly', () => {
-      expect(classifyShellCommand("gawk '{print $1}'").tier).toBe('readonly')
-    })
-
-    test('mawk is readonly', () => {
-      expect(classifyShellCommand("mawk '{print $1}'").tier).toBe('readonly')
+    test('gawk/mawk/nawk are normal', () => {
+      expect(classifyShellCommand("gawk '{print $1}'").tier).toBe('normal')
+      expect(classifyShellCommand("mawk '{print $1}'").tier).toBe('normal')
+      expect(classifyShellCommand("nawk '{print $1}'").tier).toBe('normal')
     })
   })
 
@@ -232,9 +232,15 @@ describe('shell-classifier', () => {
       ).tier).toBe('readonly')
     })
 
-    test('cat | awk | sort is readonly', () => {
+    test('cat | awk | sort is normal (awk can execute programs)', () => {
       expect(classifyShellCommand(
         "cat file.txt | awk '{print $2}' | sort -u"
+      ).tier).toBe('normal')
+    })
+
+    test('cat | cut | sort is readonly', () => {
+      expect(classifyShellCommand(
+        "cat file.txt | cut -f2 | sort -u"
       ).tier).toBe('readonly')
     })
 
@@ -666,6 +672,321 @@ describe('shell-classifier', () => {
 
     test('git with -c config override is not allowed', () => {
       expect(isGitAllowed('git -c user.name=x status')).toBe(false)
+    })
+  })
+})
+
+describe('shell-classifier security regressions', () => {
+
+  describe('H1: path resolution when tracked cwd is /', () => {
+    test('cd / && rm -rf etc is outside the roots and mass-destructive', () => {
+      expect(writesStayWithin('cd / && rm -rf etc', {}, '/project')).toBe(false)
+      expect(classifyShellCommand('cd / && rm -rf etc').tier).toBe('mass-destructive')
+    })
+
+    test('cd .. && rm -rf x from a project root is outside', () => {
+      expect(writesStayWithin('cd .. && rm -rf x', {}, '/project')).toBe(false)
+      expect(writesStayWithin('cd .. && rm -rf project/x', {}, '/project')).toBe(true)
+    })
+
+    test('root / as an allowed root contains everything', () => {
+      expect(isPathWithin('etc', {}, '/')).toBe(true)
+      expect(isPathWithin('/etc/passwd', {}, '/')).toBe(true)
+    })
+
+    test('trailing slash on the root is normalized', () => {
+      expect(writesStayWithin('rm x', {}, '/project/')).toBe(true)
+      expect(writesStayWithin('rm /projectx/y', {}, '/project/')).toBe(false)
+    })
+  })
+
+  describe('H2: command substitution in words', () => {
+    test('$() and backticks in args run their inner command', () => {
+      expect(classifyShellCommand('echo $(git push origin main)').tier).toBe('forbidden')
+      expect(classifyShellCommand('cat `git push`').tier).toBe('forbidden')
+      expect(classifyShellCommand('ls $(rm -rf /etc)').tier).toBe('forbidden')
+      expect(classifyShellCommand('echo "$(rm -rf dir)"').tier).toBe('mass-destructive')
+    })
+
+    test('substitution in command name or redirect target', () => {
+      expect(classifyShellCommand('$(echo git) push').tier).not.toBe('readonly')
+      expect(classifyShellCommand('echo hi > $(git push)').tier).toBe('forbidden')
+      expect(classifyShellCommand('`echo rm` -rf /usr').tier).not.toBe('readonly')
+    })
+
+    test('readonly substitutions stay readonly', () => {
+      expect(classifyShellCommand('echo $(ls)').tier).toBe('readonly')
+      expect(classifyShellCommand('cat `ls -t | head -1`').tier).toBe('readonly')
+    })
+
+    test('unbalanced substitution syntax is never readonly', () => {
+      expect(classifyShellCommand('echo "$(ls"').tier).toBe('normal')
+    })
+
+    test('isGitAllowed fails closed on substitutions that could hide git', () => {
+      expect(isGitAllowed('echo $(git push origin main)')).toBe(false)
+      expect(isGitAllowed('cat `git push`')).toBe(false)
+      expect(isGitAllowed('$(echo git) push')).toBe(false)
+      expect(isGitAllowed('`echo git` push')).toBe(false)
+      expect(isGitAllowed('git $(echo push)')).toBe(false)
+      expect(isGitAllowed('git status $(echo --output=/tmp/x)')).toBe(false)
+      expect(isGitAllowed('echo "$(git push"')).toBe(false)
+    })
+
+    test('isGitAllowed still allows harmless substitutions', () => {
+      expect(isGitAllowed('echo $(ls)')).toBe(true)
+      expect(isGitAllowed('latest=$(git log -1 --format=%H); echo $latest')).toBe(true)
+    })
+
+    test('writesStayWithin inspects substitutions', () => {
+      expect(writesStayWithin('echo hi > $(rm /etc/x)', {}, '/project')).toBe(false)
+      expect(writesStayWithin('echo $(rm /etc/x)', {}, '/project')).toBe(false)
+      expect(writesStayWithin('rm $(echo x)', {}, '/project')).toBe(true)
+      expect(writesStayWithin('cd $(echo /etc) && rm x', {}, '/project')).toBe(false)
+    })
+  })
+
+  describe('H3: wrapper and keyword bypasses', () => {
+    const bypasses = [
+      'env git push',
+      'env -i FOO=bar git push',
+      'command git push',
+      '{ git push; }',
+      'if true; then git push; fi',
+      'while true; do git push; done',
+      'git\\ push',
+      'eval "git push"',
+      'eval git push',
+      'xargs git push',
+      'find . -exec git push \\;',
+      'find . -execdir git push \\;',
+      'exec git push',
+      'nohup git push',
+      'time git push',
+      'timeout 5 git push',
+      'timeout -s KILL 5 git push',
+      'nice -n 10 git push',
+      'stdbuf -oL git push',
+      'sudo git push',
+      'sudo -u root git push',
+      'doas git push',
+      'busybox sh -c "git push"',
+      'echo "git push" | sh',
+      'printf "git push" | bash',
+      'bash <<< "git push"',
+      'env -S "git push"',
+    ]
+    for (const cmd of bypasses) {
+      test(`${cmd} is forbidden and not git-allowed`, () => {
+        expect(classifyShellCommand(cmd).tier).toBe('forbidden')
+        expect(isGitAllowed(cmd)).toBe(false)
+      })
+    }
+
+    test('variable-expanded command names are dynamic', () => {
+      expect(classifyShellCommand('g=git; $g push').tier).not.toBe('readonly')
+      expect(isGitAllowed('g=git; $g push')).toBe(false)
+      expect(isGitAllowed('$GIT status')).toBe(false)
+    })
+
+    test('shells fed by pipe/heredoc/herestring are never readonly and not git-allowed', () => {
+      expect(classifyShellCommand('echo "rm -rf /" | sh').tier).toBe('forbidden')
+      expect(classifyShellCommand('bash <<< "rm -rf /"').tier).toBe('forbidden')
+      expect(classifyShellCommand('echo ls | sh').tier).toBe('normal')
+      expect(classifyShellCommand('cat script | zsh').tier).toBe('normal')
+      expect(classifyShellCommand('bash < script').tier).toBe('normal')
+      expect(classifyShellCommand('bash -s').tier).toBe('normal')
+      expect(classifyShellCommand('sh <<EOF\ngit push\nEOF').tier).toBe('forbidden')
+      for (const cmd of ['echo ls | sh', 'cat script | zsh', 'bash < script', 'bash -s', 'echo x | sudo sh']) {
+        expect(isGitAllowed(cmd)).toBe(false)
+      }
+    })
+
+    test('program-executing tools are no longer readonly', () => {
+      expect(classifyShellCommand(`awk 'BEGIN{system("git push")}'`).tier).toBe('normal')
+      expect(classifyShellCommand('less +!cmd file').tier).toBe('normal')
+      expect(classifyShellCommand('more file').tier).toBe('normal')
+      expect(classifyShellCommand('env').tier).toBe('normal')
+    })
+
+    test('wrappers around readonly commands', () => {
+      expect(classifyShellCommand('env ls').tier).toBe('readonly')
+      expect(classifyShellCommand('command ls').tier).toBe('readonly')
+      expect(classifyShellCommand('command -v git').tier).toBe('readonly')
+      expect(isGitAllowed('command -v git')).toBe(true)
+      expect(classifyShellCommand('{ ls; cat f; }').tier).toBe('readonly')
+      expect(classifyShellCommand('if ls; then echo ok; fi').tier).toBe('readonly')
+      expect(classifyShellCommand('sudo ls').tier).toBe('normal')
+      expect(classifyShellCommand('timeout 5 ls').tier).toBe('normal')
+      expect(classifyShellCommand('find . | xargs grep foo').tier).toBe('normal')
+      expect(isGitAllowed('timeout 5 git status')).toBe(true)
+      expect(isGitAllowed('eval "git status"')).toBe(true)
+      expect(isGitAllowed('bash -c "git status"')).toBe(true)
+      expect(isGitAllowed('find . | xargs grep foo')).toBe(true)
+    })
+
+    test('wrappers propagate mass-destructive and forbidden', () => {
+      expect(classifyShellCommand('sudo rm -rf dir').tier).toBe('mass-destructive')
+      expect(classifyShellCommand('env rm -rf /usr').tier).toBe('forbidden')
+      expect(classifyShellCommand("find . | xargs -I{} sh -c 'rm -rf {}'").tier).toBe('mass-destructive')
+      expect(classifyShellCommand('nohup timeout 5 nice sudo rm -rf /').tier).toBe('forbidden')
+    })
+
+    test('writesStayWithin sees through wrappers and scripts', () => {
+      expect(writesStayWithin('sudo rm /etc/x', {}, '/project')).toBe(false)
+      expect(writesStayWithin('env rm /etc/x', {}, '/project')).toBe(false)
+      expect(writesStayWithin('bash -c "rm /etc/x"', {}, '/project')).toBe(false)
+      expect(writesStayWithin('eval "rm /etc/x"', {}, '/project')).toBe(false)
+      expect(writesStayWithin('find . -exec rm /etc/x \\;', {}, '/project')).toBe(false)
+      expect(writesStayWithin('ls | xargs rm -f', {}, '/project')).toBe(true)
+      expect(writesStayWithin('sudo rm x', {}, '/project')).toBe(true)
+    })
+  })
+
+  describe('M3: writesStayWithin output paths', () => {
+    test('>| is a write to its target', () => {
+      expect(writesStayWithin('echo x >| /etc/passwd', {}, '/project')).toBe(false)
+      expect(writesStayWithin('echo x >| out', {}, '/project')).toBe(true)
+    })
+
+    test('/dev/null allowance is an exact match', () => {
+      expect(writesStayWithin('echo x > /dev/null', {}, '/project')).toBe(true)
+      expect(writesStayWithin('echo x > /dev/nullx', {}, '/project')).toBe(false)
+      expect(writesStayWithin('echo x > /dev/null/../sda', {}, '/project')).toBe(false)
+    })
+
+    test('command output flags are checked', () => {
+      expect(writesStayWithin('dd if=a of=/etc/x', {}, '/project')).toBe(false)
+      expect(writesStayWithin('dd if=a of=out.img', {}, '/project')).toBe(true)
+      expect(writesStayWithin('curl -o /etc/x http://x', {}, '/project')).toBe(false)
+      expect(writesStayWithin('curl --output=/etc/x http://x', {}, '/project')).toBe(false)
+      expect(writesStayWithin('curl -o out.txt http://x', {}, '/project')).toBe(true)
+      expect(writesStayWithin('wget -O /etc/x http://x', {}, '/project')).toBe(false)
+      expect(writesStayWithin('wget -P /etc http://x', {}, '/project')).toBe(false)
+      expect(writesStayWithin('find . -fprint /etc/x', {}, '/project')).toBe(false)
+      expect(writesStayWithin('find . -fprint0 /etc/x', {}, '/project')).toBe(false)
+      expect(writesStayWithin('find . -fls /etc/x', {}, '/project')).toBe(false)
+      expect(writesStayWithin('echo x | tee /etc/x', {}, '/project')).toBe(false)
+    })
+
+    test('sed -i targets', () => {
+      expect(writesStayWithin("sed -i 's/a/b/' /etc/x", {}, '/project')).toBe(false)
+      expect(writesStayWithin("sed -i -e 's/a/b/' /etc/x", {}, '/project')).toBe(false)
+      expect(writesStayWithin("sed --in-place 's/a/b/' /etc/x", {}, '/project')).toBe(false)
+      expect(writesStayWithin("sed -i 's/a/b/' file", {}, '/project')).toBe(true)
+      expect(writesStayWithin("sed 's/a/b/' /etc/x", {}, '/project')).toBe(true)
+    })
+
+    test('tar and unzip extraction / archive targets', () => {
+      expect(writesStayWithin('tar -xzf a.tgz -C /etc', {}, '/project')).toBe(false)
+      expect(writesStayWithin('tar --extract -f a.tgz --directory=/etc', {}, '/project')).toBe(false)
+      expect(writesStayWithin('cd / && tar -xzf a.tgz', {}, '/project')).toBe(false)
+      expect(writesStayWithin('tar -xzf a.tgz', {}, '/project')).toBe(true)
+      expect(writesStayWithin('tar -czf /etc/x.tgz .', {}, '/project')).toBe(false)
+      expect(writesStayWithin('tar czf /etc/x.tgz .', {}, '/project')).toBe(false)
+      expect(writesStayWithin('tar -czf out.tgz .', {}, '/project')).toBe(true)
+      expect(writesStayWithin('tar -tzf /etc/x.tgz', {}, '/project')).toBe(true)
+      expect(writesStayWithin('unzip a.zip -d /etc', {}, '/project')).toBe(false)
+      expect(writesStayWithin('cd /usr && unzip a.zip', {}, '/project')).toBe(false)
+      expect(writesStayWithin('unzip a.zip', {}, '/project')).toBe(true)
+    })
+  })
+
+  describe('M4: git global options and dangerous environment', () => {
+    for (const cmd of [
+      'git --paginate status', 'git -p status', 'git --exec-path=/tmp status',
+      'git --exec-path /tmp status', 'git -c core.pager=sh status', 'git --config-env=core.pager=X status',
+    ]) {
+      test(`${cmd} is forbidden and not git-allowed`, () => {
+        expect(classifyShellCommand(cmd).tier).toBe('forbidden')
+        expect(isGitAllowed(cmd)).toBe(false)
+      })
+    }
+
+    test('git log -p and --no-pager stay readonly', () => {
+      expect(classifyShellCommand('git log -p').tier).toBe('readonly')
+      expect(isGitAllowed('git --no-pager log')).toBe(true)
+    })
+
+    const dangerousEnv = [
+      'PAGER', 'GIT_PAGER', 'GIT_EXTERNAL_DIFF', 'GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_CONFIG_PARAMETERS',
+      'GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'PATH',
+    ]
+    for (const v of dangerousEnv) {
+      test(`${v}=x git status is forbidden`, () => {
+        const result = classifyShellCommand(`${v}=x git status`)
+        expect(result.tier).toBe('forbidden')
+        expect(result.reason).toBeTruthy()
+        expect(isGitAllowed(`${v}=x git status`)).toBe(false)
+      })
+    }
+
+    test('dangerous env through wrappers still reaches git', () => {
+      expect(classifyShellCommand('env PAGER=x git status').tier).toBe('forbidden')
+      expect(classifyShellCommand('PAGER=x sudo git status').tier).toBe('forbidden')
+      expect(classifyShellCommand('PAGER=x bash -c "git status"').tier).toBe('forbidden')
+      expect(isGitAllowed('env PAGER=x git status')).toBe(false)
+    })
+
+    test('env prefix on non-git or benign vars is not forbidden', () => {
+      expect(classifyShellCommand('PAGER=x ls').tier).toBe('normal')
+      expect(classifyShellCommand('FOO=bar git status').tier).toBe('normal')
+      expect(classifyShellCommand('FOO=bar git push').tier).toBe('forbidden')
+      expect(isGitAllowed('FOO=bar git status')).toBe(true)
+    })
+  })
+
+  describe('M5: shell -c unwrapping', () => {
+    for (const cmd of [
+      'bash -xc "rm -rf /"', 'sh -ec "rm -rf /"', 'zsh -o pipefail -c "rm -rf /"', 'bash -- -c "rm -rf /"',
+      "bash -c'rm -rf /'", 'dash -c "rm -rf /"', 'ksh -c "rm -rf /"', 'fish -c "rm -rf /"', 'ash -c "rm -rf /"',
+      'busybox sh -c "rm -rf /"', 'bash -lc "rm -rf /"', 'bash -l -c "rm -rf /"', '/bin/bash -c "rm -rf /"',
+      'fish --command="rm -rf /"',
+    ]) {
+      test(`${cmd} is forbidden`, () => {
+        expect(classifyShellCommand(cmd).tier).toBe('forbidden')
+      })
+    }
+
+    test('shell -c with readonly script is readonly; bare shells are normal', () => {
+      expect(classifyShellCommand('bash -c ls').tier).toBe('readonly')
+      expect(classifyShellCommand('bash -c').tier).toBe('normal')
+      expect(classifyShellCommand('bash script.sh').tier).toBe('normal')
+      expect(classifyShellCommand('cat x | bash -c ls').tier).toBe('normal')
+      expect(isGitAllowed('bash -c')).toBe(false)
+      expect(isGitAllowed('bash script.sh')).toBe(true)
+    })
+  })
+
+  describe('M8: filesystem and device destruction', () => {
+    for (const cmd of ['mkfs.ext4 /dev/sda1', 'mkfs /dev/sda', 'wipefs -a /dev/sda', 'shred /dev/sda', 'shred -n 3 /dev/nvme0n1', 'sudo mkfs.xfs /dev/sdb']) {
+      test(`${cmd} is forbidden`, () => {
+        const result = classifyShellCommand(cmd)
+        expect(result.tier).toBe('forbidden')
+        expect(result.reason).toBeTruthy()
+      })
+    }
+
+    test('shred on a regular file is normal', () => {
+      expect(classifyShellCommand('shred file.txt').tier).toBe('normal')
+    })
+  })
+
+  describe('L8: find -exec recursion', () => {
+    test('find -exec through a shell wrapper is mass-destructive', () => {
+      expect(classifyShellCommand("find . -exec sh -c 'rm -rf {}' \\;").tier).toBe('mass-destructive')
+      expect(classifyShellCommand("find . -exec sudo rm -rf {} +").tier).toBe('mass-destructive')
+      expect(classifyShellCommand("find . -exec rm -rf {} +").tier).toBe('mass-destructive')
+    })
+
+    test('find -exec with forbidden inner command is forbidden', () => {
+      expect(classifyShellCommand("find . -exec sh -c 'rm -rf /usr' \\;").tier).toBe('forbidden')
+      expect(classifyShellCommand('find . -ok git push \\;').tier).toBe('forbidden')
+    })
+
+    test('find -exec with benign command is normal, plain find is readonly', () => {
+      expect(classifyShellCommand('find . -exec cat {} \\;').tier).toBe('normal')
+      expect(classifyShellCommand('find . -name x').tier).toBe('readonly')
     })
   })
 })
