@@ -48,8 +48,6 @@ jobs:
           linux-x64-gnu
           inference/target/catalog-inputs
           release/linux-x64-gnu
-      - id: npm-candidate
-        run: bun run packages/release/scripts/prepare-npm.ts release/npm-candidate
       - id: version
         run: echo "version=$(jq -r '.version' packages/launcher/package.json)" >> "$GITHUB_OUTPUT"
       - name: Assemble the Linux x64 candidate
@@ -61,6 +59,12 @@ jobs:
         env:
           MAGNITUDE_RELEASE_VERSION: ${{ steps.version.outputs.version }}
           MAGNITUDE_SOURCE_COMMIT: ${{ github.sha }}
+      - name: Pack the npm candidate against the assembled manifest
+        id: npm-candidate
+        run: >-
+          bun run packages/release/scripts/prepare-npm.ts
+          release/npm-candidate
+          --manifest release-candidate/magnitude-release.json
       - name: Accept the production candidate path
         run: >-
           bun run scripts/accept-release-candidate.ts
