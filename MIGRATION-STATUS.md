@@ -6,13 +6,8 @@ Tracks the TypeScript-on-Bun migration of the inference engine described in
 | Phase | Status | Notes |
 |---|---|---|
 | 1. Native slice (`packages/icn-native`) | Done | Loads GGUF, tokenizes, greedy decode, streams text; 16 tests; verified on CPU with a synthetic model |
-<<<<<<< Updated upstream
-| 2. Contracts and store | Not started | Fully verifiable without GPU hardware |
-| 3. Engine | Not started | CPU parity verifiable; GPU backends, speculative, multimodal need hardware |
-=======
-| 2. Contracts and store | In progress | `packages/icn-models` store core + wave-2 catalog/discovery modules ported; 46 vitest tests in icn-models |
-| 3. Engine | In progress | `packages/icn-engine` scheduler, sequence pool, KV reuse types, sampling config, reasoning resolution (CPU-verifiable); native FFI stubs for sampling, speculative, multimodal, worker isolation |
->>>>>>> Stashed changes
+| 2. Contracts and store | In progress | `icn-contracts` (37 tests) + `icn-models` store/catalog/discovery (46 tests); models still uses `_contracts-shim` pending import cutover; HF network paths mocked |
+| 3. Engine | In progress | `packages/icn-engine` scheduler, sequence pool, KV reuse, sampling config, reasoning resolution (28 CPU tests); native FFI stubs for sampling, speculative, multimodal, worker isolation |
 | 4. HTTP and lifecycle | Not started | HTTP contract and ACN integration verifiable here |
 | 5. Release cutover | Not started | Needs release runners |
 
@@ -22,6 +17,16 @@ Tracks the TypeScript-on-Bun migration of the inference engine described in
 - Throughput parity on reference hardware.
 - Production-model behavior: chat templates, grammars, speculative decoding, multimodal.
 - Windows worker supervision; first Windows release build.
+
+## Open items (CPU-verifiable, unfinished)
+
+- Wire `icn-models` to `@magnitudedev/icn-contracts` and delete `_contracts-shim`.
+- Complete HF-backed catalog refresh, release catalog materialization, and `ManagedModelDownloads`.
+- Connect engine sampling/chat-template paths to `@magnitudedev/icn-native` and add CPU token-for-token parity harness.
+- Implement Bun Worker FFI owner (`spawnInferenceWorker`) with MessageChannel token streams.
+- Port `packages/icn-server` (OpenAPI HTTP, bootstrap, worker supervision, memory supervisor).
+- Port `packages/icn-hardware` calibration/capacity summary (partially hardware-gated).
+- Release scripts for Bun-compiled executable + shim (phase 5).
 
 ## Decisions pending
 

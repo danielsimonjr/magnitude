@@ -1,0 +1,31 @@
+{
+  "name": "@magnitudedev/icn-engine",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./scheduler": "./src/scheduler/index.ts",
+    "./sampling": "./src/sampling/index.ts",
+    "./reasoning": "./src/reasoning/index.ts",
+    "./multimodal": "./src/multimodal/index.ts",
+    "./speculative": "./src/speculative/index.ts",
+    "./worker": "./src/worker/index.ts",
+    "./executor": "./src/executor/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bunx --bun vitest run"
+  },
+  "dependencies": {
+    "@magnitudedev/icn-contracts": "workspace:*",
+    "@magnitudedev/icn-native": "workspace:*",
+    "effect": "3.21.2"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "vitest": "^3.2.4"
+  }
+}

@@ -38,6 +38,8 @@
       "@magnitudedev/icn-models": ["./packages/icn-models/src"],
       "@magnitudedev/icn-models/*": ["./packages/icn-models/src/*"],
       "@magnitudedev/icn-native": ["./packages/icn-native/src"],
+      "@magnitudedev/icn-engine": ["./packages/icn-engine/src"],
+      "@magnitudedev/icn-engine/*": ["./packages/icn-engine/src/*"],
       "@magnitudedev/icn-protocol": ["./packages/icn-protocol/src"],
       "@magnitudedev/icn-protocol/*": ["./packages/icn-protocol/src/*"],
       "@magnitudedev/icn": ["./packages/icn/src"],
