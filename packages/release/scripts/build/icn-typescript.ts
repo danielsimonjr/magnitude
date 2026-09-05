@@ -2,11 +2,13 @@
  * Phase-5 release cutover: compile the TypeScript ICN (`packages/icn-server`) with Bun
  * and package llama / shim / CPU backend shared libraries from the icn-native build.
  */
+import { existsSync } from "node:fs"
 import { access, chmod, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { basename, delimiter, dirname, join, resolve } from "node:path"
 import { Schema } from "effect"
 import { IcnBinaryIdentity } from "@magnitudedev/icn-protocol"
 import { ICN_EXECUTABLE_NAME } from "../../src/executables"
+import { MACOS_DEPLOYMENT_TARGET } from "../../src/targets"
 import { getTargetInfo } from "../../../../scripts/release-target"
 import { run } from "./common"
 
@@ -106,18 +108,53 @@ export const cmakeDefinesFromEnvironment = (
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([key, value]) => `-D${key}=${value}`)
 
-export const withoutWindowsLlvmPath = (
+/**
+ * Windows CUDA native builds need MSVC `link.exe` and the Windows SDK `rc.exe`.
+ * VS puts LLVM ahead of MSVC on PATH, and `bun install` puts npm's `rc` package
+ * in `node_modules/.bin`, which CMake mistakes for the resource compiler.
+ */
+export const sanitizeWindowsNativeBuildEnv = (
   environment: Readonly<Record<string, string | undefined>>,
 ): Readonly<Record<string, string>> => {
   const pathKey =
     Object.keys(environment).find((key) => key.toUpperCase() === "PATH") ?? "Path"
   const pathValue = environment[pathKey] ?? environment.PATH ?? environment.Path ?? ""
-  return {
+  const sanitized: Record<string, string> = {
     [pathKey]: pathValue
       .split(";")
-      .filter((entry) => entry.length > 0 && !/[\\/]Llvm[\\/]/i.test(entry))
+      .filter((entry) => {
+        if (entry.length === 0) return false
+        if (/[\\/]Llvm[\\/]/i.test(entry)) return false
+        if (/[\\/]node_modules[\\/]\.bin$/i.test(entry)) return false
+        return true
+      })
       .join(";"),
   }
+
+  const existingRc = environment.CMAKE_RC_COMPILER
+  if (typeof existingRc === "string" && existingRc.length > 0) {
+    sanitized.CMAKE_RC_COMPILER = existingRc
+    return sanitized
+  }
+
+  const sdkDir = environment.WindowsSdkDir ?? environment.WINDOWSSDKDIR
+  const sdkVer = (environment.WindowsSDKVersion ?? environment.WINDOWSSDKVERSION)
+    ?.replace(/[\\/]+$/, "")
+  if (sdkDir && sdkVer) {
+    const candidate = join(sdkDir, "bin", sdkVer, "x64", "rc.exe")
+    if (existsSync(candidate)) {
+      sanitized.CMAKE_RC_COMPILER = candidate
+    }
+  }
+  return sanitized
+}
+
+/** Bun `--compile --outfile=foo.exe` may write `foo.building.exe`, not `foo.exe.building`. */
+export const stagingBinaryPath = (binary: string): string => {
+  if (/\.exe$/i.test(binary)) {
+    return binary.replace(/\.exe$/i, ".building.exe")
+  }
+  return `${binary}.building`
 }
 
 const nativeRpathEnvironment = (
@@ -246,12 +283,18 @@ const buildShim = async (
     "-lggml",
     "-lggml-base",
   ]
+  const env: Record<string, string | undefined> = { ...process.env }
   if (platform === "darwin") {
-    args.push("-Wl,-rpath,@loader_path", "-Wl,-rpath,@loader_path/../runtime")
+    args.push(
+      `-mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}`,
+      "-Wl,-rpath,@loader_path",
+      "-Wl,-rpath,@loader_path/../runtime",
+    )
+    env.MACOSX_DEPLOYMENT_TARGET = MACOS_DEPLOYMENT_TARGET
   } else if (platform !== "windows") {
     args.push("-Wl,-rpath,$ORIGIN", "-Wl,-rpath,$ORIGIN/../runtime", "-Wl,--no-undefined")
   }
-  await run(args, { cwd: PROJECT_ROOT })
+  await run(args, { cwd: PROJECT_ROOT, env })
   return out
 }
 
@@ -290,24 +333,27 @@ export const buildIcnNativeArtifacts = async (input: {
 
   const features = input.features ?? ["dynamic-backends"]
   const featureFlags = cmakeFeatureFlags(features)
+  // On Windows CUDA builds: drop LLVM (MSVC link.exe) and node_modules/.bin
+  // (npm `rc`), and pin CMAKE_RC_COMPILER to the Windows SDK resource compiler.
+  const windowsNativeEnv =
+    process.platform === "win32" && features.some((feature) => feature.includes("cuda"))
+      ? sanitizeWindowsNativeBuildEnv({
+          ...process.env,
+          ...input.buildEnvironment,
+        })
+      : {}
   const buildEnvironment = {
     ...input.buildEnvironment,
     ...nativeRpathEnvironment(input.target),
+    ...(windowsNativeEnv.CMAKE_RC_COMPILER
+      ? { CMAKE_RC_COMPILER: windowsNativeEnv.CMAKE_RC_COMPILER }
+      : {}),
   }
-  // On Windows, VS puts LLVM's lld-link ahead of MSVC link.exe. CUDA device
-  // linking requires the MSVC linker, so drop LLVM directories from PATH while
-  // configuring and building CUDA backends.
-  const processEnvironment =
-    process.platform === "win32" && features.some((feature) => feature.includes("cuda"))
-      ? {
-          ...process.env,
-          ...buildEnvironment,
-          ...withoutWindowsLlvmPath(process.env),
-        }
-      : {
-          ...process.env,
-          ...buildEnvironment,
-        }
+  const processEnvironment = {
+    ...process.env,
+    ...buildEnvironment,
+    ...windowsNativeEnv,
+  }
   const cmakeDefines = cmakeDefinesFromEnvironment(buildEnvironment)
   await run([
     cmake,
@@ -415,7 +461,7 @@ export const buildTypescriptIcnBinary = async (target: string): Promise<string> 
   )
   await mkdir(resolve(PROJECT_ROOT, "bin"), { recursive: true })
   // Stage through a temp name so a failed compile cannot leave a half-written release binary.
-  const staging = `${binary}.building`
+  const staging = stagingBinaryPath(binary)
   await run(
     [
       "bun",
