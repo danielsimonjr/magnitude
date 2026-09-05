@@ -8,7 +8,7 @@ applies_to:
   - packages/release/scripts/matrix.ts
   - packages/release/scripts/validate-host.ts
   - packages/release/src/targets.ts
-  - inference/scripts/compile.ts
+  - packages/icn-native/scripts/build-native.ts
 ---
 
 # Release build and validation
@@ -21,6 +21,11 @@ archives, not only on intermediate build outputs.
 - Every job builds one pinned source commit and one Changesets-owned version.
 - Version-dependent source is generated in each clean checkout before release code is loaded.
 - Planner inputs are generated once and shared by every host build.
+- Host bases compile the TypeScript ICN with Bun and package llama/shim/CPU backend
+  shared libraries produced by the icn-native cmake build beside the executable.
+- Backend packs build the same native tree with pack-specific cmake features and ship
+  only modules plus required runtime libraries; native-build identity matches the
+  TypeScript ICN `version --json` probe.
 - Toolchains, backend features, CUDA targets, and shader compiler versions are explicit release
   inputs. Ambient runner packages must not enable optional native features.
 

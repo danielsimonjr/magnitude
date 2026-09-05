@@ -29,5 +29,10 @@ describe("bootstrap records", () => {
     expect(readyRecord.instanceId).toBe("instance")
     expect(readyRecord.pid).toBe(42)
     expect(readyRecord.protocolVersion).toBe(1)
+    expect(readyRecord.apiVersion).toBe(1)
+    expect(readyRecord.origin).toBe("http://127.0.0.1:8080")
+    expect(readyRecord.nativeBuild.length).toBeGreaterThan(0)
+    // packages/icn lifecycle decodes this exact line prefix + IcnStartupRecord JSON.
+    expect(ready).toMatch(/^MAGNITUDE_ICN_READY \{/)
   })
 })
