@@ -32,8 +32,13 @@ export interface CommonReasoningBudget {
 export interface CommonSamplerConfig {
   readonly seed: number | undefined
   readonly ignoreEos: boolean | undefined
+  readonly topK: number | undefined
   readonly topP: number | undefined
   readonly temperature: number | undefined
+  readonly penaltyLastN: number | undefined
+  readonly penaltyRepeat: number | undefined
+  readonly penaltyFreq: number | undefined
+  readonly penaltyPresent: number | undefined
   readonly grammar: CommonGrammar | undefined
   readonly grammarLazy: boolean | undefined
   readonly grammarTriggers: readonly CommonGrammarTrigger[] | undefined
@@ -129,8 +134,13 @@ export const buildSamplerConfig = (
     seed: request.generation.sampling.seed,
     ignoreEos:
       request.generation.end_of_generation === "ignore_model_end" ? true : undefined,
+    topK: undefined,
     topP: request.generation.sampling.top_p,
     temperature: request.generation.sampling.temperature,
+    penaltyLastN: undefined,
+    penaltyRepeat: undefined,
+    penaltyFreq: undefined,
+    penaltyPresent: undefined,
     grammar,
     grammarLazy: prepared.grammar.length > 0 ? prepared.grammarLazy : undefined,
     grammarTriggers,
@@ -148,8 +158,9 @@ import { sampleTokenFromContext } from "./native.js"
  * Sample one token from logits via `@magnitudedev/icn-native`.
  *
  * The executor calls this on the dedicated worker thread that owns FFI after
- * `bindSamplingContext`. Only greedy decoding is wired; temperature, top-p,
- * grammars, and reasoning budgets require native sampler-chain FFI.
+ * `bindSamplingContext`. Uses the native sampler chain when available;
+ * otherwise greedy argmax. Grammars and reasoning budgets still require
+ * additional native wiring.
  */
 export const sampleToken = async (
   config: CommonSamplerConfig,

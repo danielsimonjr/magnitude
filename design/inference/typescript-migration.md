@@ -6,6 +6,7 @@ applies_to:
   - packages/icn-engine/**
   - packages/icn-hardware/**
   - packages/icn-server/**
+  - packages/icn-parity/**
   - packages/icn/**
   - packages/icn-protocol/**
   - packages/release/scripts/build/icn-typescript.ts

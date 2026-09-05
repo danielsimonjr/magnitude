@@ -5,9 +5,11 @@
  *   - libllama: every llama.cpp entry point whose signature only uses
  *     pointers and scalars is bound directly here.
  *   - libicn_shim: wrappers for entry points that take/return structs by
- *     value (model/context params, llama_batch), which bun:ffi cannot express.
+ *     value (model/context params, llama_batch, sampler chain params,
+ *     chat message arrays), which bun:ffi cannot express.
  *
- * Nothing in this module allocates native state; see model.ts / context.ts.
+ * Nothing in this module allocates native state; see model.ts / context.ts /
+ * sampler.ts / chat.ts / devices.ts.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -126,6 +128,23 @@ export const LLAMA_SYMBOLS = {
   },
   llama_supports_gpu_offload: { args: [], returns: FFIType.bool },
   llama_print_system_info: { args: [], returns: FFIType.cstring },
+  // Sampler chain primitives (pointer/scalar only).
+  llama_sampler_chain_add: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.void },
+  llama_sampler_chain_n: { args: [FFIType.ptr], returns: FFIType.i32 },
+  llama_sampler_free: { args: [FFIType.ptr], returns: FFIType.void },
+  llama_sampler_accept: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.void },
+  llama_sampler_reset: { args: [FFIType.ptr], returns: FFIType.void },
+  llama_sampler_sample: { args: [FFIType.ptr, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+  llama_sampler_init_greedy: { args: [], returns: FFIType.ptr },
+  llama_sampler_init_dist: { args: [FFIType.u32], returns: FFIType.ptr },
+  llama_sampler_init_top_k: { args: [FFIType.i32], returns: FFIType.ptr },
+  llama_sampler_init_top_p: { args: [FFIType.f32, FFIType.u64], returns: FFIType.ptr },
+  llama_sampler_init_temp: { args: [FFIType.f32], returns: FFIType.ptr },
+  llama_sampler_init_penalties: {
+    args: [FFIType.i32, FFIType.i32, FFIType.f32, FFIType.f32, FFIType.f32],
+    returns: FFIType.ptr,
+  },
+  llama_chat_builtin_templates: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.i32 },
 } as const;
 
 /** icn shim entry points (see native/shim.c). */
@@ -134,6 +153,10 @@ export const SHIM_SYMBOLS = {
   icn_backend_init: { args: [], returns: FFIType.void },
   icn_backend_free: { args: [], returns: FFIType.void },
   icn_log_set_min_level: { args: [FFIType.i32], returns: FFIType.void },
+  icn_backend_dev_count: { args: [], returns: FFIType.u64 },
+  icn_backend_dev_name: { args: [FFIType.u64], returns: FFIType.cstring },
+  icn_backend_dev_description: { args: [FFIType.u64], returns: FFIType.cstring },
+  icn_backend_dev_type: { args: [FFIType.u64], returns: FFIType.i32 },
   // (path, n_gpu_layers, load_mode, vocab_only)
   icn_model_load: { args: [FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.bool], returns: FFIType.ptr },
   // (model, n_ctx, n_batch, n_threads, n_threads_batch, embeddings)
@@ -151,9 +174,30 @@ export const SHIM_SYMBOLS = {
   icn_memory_clear: { args: [FFIType.ptr, FFIType.bool], returns: FFIType.void },
   icn_memory_seq_rm: { args: [FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.bool },
   icn_sample_greedy: { args: [FFIType.ptr, FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+  icn_sampler_chain_init: { args: [FFIType.bool], returns: FFIType.ptr },
+  // (n_vocab, top_k, top_p, temperature, penalty_last_n, penalty_repeat, penalty_freq, penalty_present, seed)
+  icn_sampler_chain_build: {
+    args: [
+      FFIType.i32,
+      FFIType.i32,
+      FFIType.f32,
+      FFIType.f32,
+      FFIType.i32,
+      FFIType.f32,
+      FFIType.f32,
+      FFIType.f32,
+      FFIType.u32,
+    ],
+    returns: FFIType.ptr,
+  },
+  // (tmpl, roles**, contents**, n_msg, add_ass, buf*, length)
+  icn_chat_apply_template: {
+    args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.bool, FFIType.ptr, FFIType.i32],
+    returns: FFIType.i32,
+  },
 } as const;
 
-export const SHIM_ABI_VERSION = 1;
+export const SHIM_ABI_VERSION = 2;
 
 export type LlamaSymbols = ReturnType<typeof dlopen<typeof LLAMA_SYMBOLS>>["symbols"];
 export type ShimSymbols = ReturnType<typeof dlopen<typeof SHIM_SYMBOLS>>["symbols"];
@@ -199,6 +243,16 @@ export const loadNative = (): NativeLibraries => {
   }
   loaded = { paths, llama, shim };
   return loaded;
+};
+
+/** True when native libraries can be resolved and opened without throwing. */
+export const isNativeAvailable = (): boolean => {
+  try {
+    loadNative();
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 /** True when a pointer returned from native code is NULL. */

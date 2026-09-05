@@ -94,6 +94,7 @@ const buildLlama = async (jobs: number): Promise<string> => {
     "-DLLAMA_BUILD_EXAMPLES=OFF",
     "-DLLAMA_BUILD_SERVER=OFF",
     "-DLLAMA_BUILD_TOOLS=OFF",
+    "-DLLAMA_BUILD_COMMON=OFF",
     "-DLLAMA_CURL=OFF",
     "-DCMAKE_BUILD_TYPE=Release",
   ]);

@@ -37,8 +37,20 @@ describe("FFI signature tables", () => {
       expect(direct).not.toContain(forbidden);
     }
     expect(Object.keys(SHIM_SYMBOLS)).toEqual(
-      expect.arrayContaining(["icn_model_load", "icn_context_new", "icn_decode_tokens", "icn_logits"])
+      expect.arrayContaining([
+        "icn_model_load",
+        "icn_context_new",
+        "icn_decode_tokens",
+        "icn_logits",
+        "icn_sampler_chain_init",
+        "icn_sampler_chain_build",
+        "icn_chat_apply_template",
+        "icn_backend_dev_count",
+      ])
     );
+    for (const forbidden of ["llama_sampler_chain_init", "llama_chat_apply_template"]) {
+      expect(direct).not.toContain(forbidden);
+    }
   });
 
   test("signatures match llama.h for the core tokenizer/decoder calls", () => {
@@ -49,10 +61,11 @@ describe("FFI signature tables", () => {
     expect(LLAMA_SYMBOLS.llama_token_to_piece.args).toHaveLength(6);
     expect(LLAMA_SYMBOLS.llama_get_logits_ith.returns).toBe(FFIType.ptr);
     expect(LLAMA_SYMBOLS.llama_model_n_params.returns).toBe(FFIType.u64);
+    expect(LLAMA_SYMBOLS.llama_sampler_sample.args).toEqual([FFIType.ptr, FFIType.ptr, FFIType.i32]);
     expect(SHIM_SYMBOLS.icn_decode_tokens.args).toEqual([
       FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.bool,
     ]);
-    expect(SHIM_ABI_VERSION).toBe(1);
+    expect(SHIM_ABI_VERSION).toBe(2);
   });
 });
 
