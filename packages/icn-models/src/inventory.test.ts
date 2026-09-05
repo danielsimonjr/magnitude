@@ -51,7 +51,7 @@ describe("inventory", () => {
     await manager.ensureInstalledModelInventory()
     const installed = await manager.listInstalled()
     expect(installed.packages.length).toBe(1)
-    expect(installed.packages[0].origin).toBe("hugging_face_cache")
+    expect(installed.packages[0].origin).toBe("HuggingFaceCache")
     const assessed = await manager.list()
     expect(assessed.length).toBe(1)
     rmSync(temporary, { recursive: true })

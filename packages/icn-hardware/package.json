@@ -7,11 +7,21 @@
   "types": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./memory": "./src/memory.ts"
+    "./memory": "./src/memory.ts",
+    "./capacity": "./src/capacity.ts",
+    "./snapshot": "./src/snapshot.ts",
+    "./calibration": "./src/calibration.ts",
+    "./probes": "./src/probes.ts",
+    "./planning": "./src/planning.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bunx --bun vitest run"
+  },
+  "dependencies": {
+    "@magnitudedev/icn-contracts": "workspace:*",
+    "@noble/hashes": "^2.2.0",
+    "effect": "3.21.2"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",

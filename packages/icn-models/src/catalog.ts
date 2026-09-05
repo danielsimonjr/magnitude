@@ -3,9 +3,13 @@ import { basename, dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
   CatalogBaseId,
+  catalogBaseId,
+  catalogVariantId,
   CatalogVariantId,
+  contentIdentity,
   InventoryError,
-  ModelReleaseDate,
+  isValidIsoDate,
+  modelReleaseDate,
   type HuggingFaceRepositorySnapshot,
   type IntelligenceProvenance,
   type ModelPackage,
@@ -13,7 +17,8 @@ import {
   type ModelParameterization,
   type RecommendableModelCatalog,
   type ServableModelBundle,
-} from "./_contracts-shim"
+} from "@magnitudedev/icn-contracts"
+import { Option } from "effect"
 import { PlannerBundle } from "./planner-bundle"
 import { ServableModelBundleKey, servableModelBundleKeyForBundle } from "./package-service"
 
@@ -335,19 +340,19 @@ export const repositorySnapshot = (
 ): HuggingFaceRepositorySnapshot => ({
   repository,
   commit,
-  last_modified: null,
-  downloads: null,
-  likes: null,
+  last_modified: Option.none(),
+  downloads: Option.none(),
+  likes: Option.none(),
   gated: false,
   private: false,
-  license: null,
-  license_url: null,
+  license: Option.none(),
+  license_url: Option.none(),
   base_models: [],
   tags: [],
   gguf_files: paths.map((path) => ({
     path,
-    size_bytes: 1,
-    content: { _tag: "Unknown" },
+    size_bytes: 1n,
+    content: contentIdentity.unknown(),
   })),
 })
 
@@ -360,14 +365,7 @@ const validCatalogIntelligence = (intelligence: CatalogModelDeclaration["intelli
   if (!Number.isFinite(intelligence.score) || intelligence.score < 0) {
     return false
   }
-  const validReleaseDate = (value: string): boolean => {
-    try {
-      ModelReleaseDate.new(value)
-      return true
-    } catch {
-      return false
-    }
-  }
+  const validReleaseDate = (value: string): boolean => isValidIsoDate(value)
   switch (intelligence.provenance.kind) {
     case "artificialAnalysisIntelligenceIndex":
       return (

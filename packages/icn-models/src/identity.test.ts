@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest"
-import { ContentIdentity } from "./_contracts-shim"
-import { contentId, inventoryEntryId } from "./identity"
+import { Option } from "effect"
+import { contentIdentity } from "@magnitudedev/icn-contracts"
+import { contentId } from "./identity"
 
 describe("identity", () => {
   const component = (path: string, digest: string) => ({
     path,
-    role: "Weights" as const,
-    size_bytes: 42,
-    content: ContentIdentity.Sha256(digest),
-    shard_index: undefined,
-    relationship: undefined,
+    role: "weights" as const,
+    size_bytes: 42n,
+    content: contentIdentity.sha256(digest),
+    shard_index: Option.none(),
+    relationship: Option.none(),
   })
 
   it("content identity is order independent but content sensitive", () => {

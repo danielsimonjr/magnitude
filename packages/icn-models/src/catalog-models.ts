@@ -1,13 +1,18 @@
+import { Option } from "effect"
 import {
-  CatalogBaseId,
-  CatalogVariantId,
+  catalogBaseId,
+  catalogVariantId,
+  modelFileId,
+  modelPackageId,
+  modelReleaseDate,
   ModelId,
-  ModelReleaseDate,
+  type CatalogBaseId,
   type CatalogModel,
   type CatalogModelState,
   type CatalogModelUpdate,
   type CatalogPackageAffiliation,
   type CatalogPackageRole,
+  type CatalogVariantId,
   type EffectiveModel,
   type InstalledModelPackage,
   type ModelFailure,
@@ -22,7 +27,7 @@ import {
   type RecommendableModelCatalog,
   type ServableModelBundle,
   type ServingProfile,
-} from "./_contracts-shim"
+} from "@magnitudedev/icn-contracts"
 import { catalogPackages, catalogTarget, type InstalledPackageSnapshot } from "./inventory"
 import {
   bundlePackages,
@@ -55,7 +60,7 @@ export const removalPlan = (
 })
 
 const catalogId = (definition: RecommendableModel): ModelId =>
-  ModelId.catalog(definition.model_id, definition.variant_id)
+  ModelId.catalog(definition.modelId, definition.variantId)
 
 interface InstallationOrigins {
   magnitude: boolean
@@ -63,7 +68,7 @@ interface InstallationOrigins {
 }
 
 const includeOrigin = (origins: InstallationOrigins, origin: ModelPackageInstallationOrigin): void => {
-  if (origin === "magnitude") {
+  if (origin === "Magnitude") {
     origins.magnitude = true
   } else {
     origins.external = true
@@ -80,10 +85,10 @@ type CatalogMaterialState =
     }
 
 interface CatalogResolution {
-  installed_packages: readonly InstalledModelPackage[]
-  missing_desired_package_ids: readonly ModelPackageId[]
-  superseded_package_ids: readonly ModelPackageId[]
-  required_download_bytes: number
+  installedPackages: readonly InstalledModelPackage[]
+  missingDesiredPackageIds: readonly ModelPackageId[]
+  supersededPackageIds: readonly ModelPackageId[]
+  requiredDownloadBytes: number
   state: CatalogMaterialState
 }
 
@@ -98,44 +103,44 @@ export const catalogResolution = (
   const requiredDownloadBytes = desiredPackages
     .filter(([package_]) => !present.has(package_.id))
     .flatMap(([package_]) => package_.files)
-    .reduce((sum, file) => sum + file.size_bytes, 0)
+    .reduce((sum, file) => sum + file.sizeBytes, 0)
   const supersededPackageIds = affiliations
     .filter(
       (affiliation) =>
-        affiliation.model_id === definition.model_id &&
-        affiliation.variant_id === definition.variant_id &&
-        !desiredIds.has(affiliation.package_id) &&
-        present.has(affiliation.package_id),
+        affiliation.modelId === definition.modelId &&
+        affiliation.variantId === definition.variantId &&
+        !desiredIds.has(affiliation.packageId) &&
+        present.has(affiliation.packageId),
     )
-    .map((affiliation) => affiliation.package_id)
+    .map((affiliation) => affiliation.packageId)
   const installedPackages = [...present.values()].filter((entry) => {
     if (missingDesiredPackageIds.length === 0) {
       return desiredIds.has(entry.package.id)
     }
     return (
       desiredIds.has(entry.package.id) ||
-      (entry.catalog_attribution._tag === "Attributed" &&
-        entry.catalog_attribution.model_id === definition.model_id &&
-        entry.catalog_attribution.variant_id === definition.variant_id) ||
+      (entry.catalogAttribution._tag === "Attributed" &&
+        entry.catalogAttribution.modelId === definition.modelId &&
+        entry.catalogAttribution.variantId === definition.variantId) ||
       affiliations.some(
         (affiliation) =>
-          affiliation.model_id === definition.model_id &&
-          affiliation.variant_id === definition.variant_id &&
-          affiliation.package_id === entry.package.id,
+          affiliation.modelId === definition.modelId &&
+          affiliation.variantId === definition.variantId &&
+          affiliation.packageId === entry.package.id,
       )
     )
   })
   const targets = [...present.values()].filter(
     (entry) =>
       entry.package.id === catalogTarget(definition).id ||
-      (entry.catalog_attribution._tag === "Attributed" &&
-        entry.catalog_attribution.model_id === definition.model_id &&
-        entry.catalog_attribution.variant_id === definition.variant_id) ||
+      (entry.catalogAttribution._tag === "Attributed" &&
+        entry.catalogAttribution.modelId === definition.modelId &&
+        entry.catalogAttribution.variantId === definition.variantId) ||
       affiliations.some(
         (affiliation) =>
-          affiliation.model_id === definition.model_id &&
-          affiliation.variant_id === definition.variant_id &&
-          affiliation.package_id === entry.package.id &&
+          affiliation.modelId === definition.modelId &&
+          affiliation.variantId === definition.variantId &&
+          affiliation.packageId === entry.package.id &&
           affiliation.role === "Target",
       ),
   )
@@ -179,10 +184,10 @@ export const catalogResolution = (
     }
   }
   return {
-    installed_packages: installedPackages,
-    missing_desired_package_ids: missingDesiredPackageIds,
-    superseded_package_ids: supersededPackageIds,
-    required_download_bytes: requiredDownloadBytes,
+    installedPackages: installedPackages,
+    missingDesiredPackageIds: missingDesiredPackageIds,
+    supersededPackageIds: supersededPackageIds,
+    requiredDownloadBytes: requiredDownloadBytes,
     state,
   }
 }
@@ -193,7 +198,7 @@ const installation = (
   occurrenceOrigins: ReadonlyMap<ModelPackageId, InstallationOrigins>,
 ): ModelInstallation => {
   const installedBytes = installed.reduce(
-    (sum, entry) => sum + entry.package.files.reduce((fileSum, file) => fileSum + file.size_bytes, 0),
+    (sum, entry) => sum + entry.package.files.reduce((fileSum, file) => fileSum + file.sizeBytes, 0),
     0,
   )
   const origins = installed.reduce<InstallationOrigins>(
@@ -218,14 +223,14 @@ const installation = (
   if (selectedTarget !== undefined) {
     return {
       _tag: "Resolved",
-      installed_bytes: installedBytes,
-      primary_path: primaryModelPath(selectedTarget),
+      installedBytes: installedBytes,
+      primaryPath: primaryModelPath(selectedTarget),
       ownership,
     }
   }
   return {
     _tag: "Unresolved",
-    installed_bytes: installedBytes,
+    installedBytes: installedBytes,
     ownership,
   }
 }
@@ -254,32 +259,32 @@ export const catalogModel = (
           _tag: "Installed",
           effective: resolution.state.effective,
           installation: installation(
-            resolution.installed_packages,
+            resolution.installedPackages,
             resolution.state._tag === "Installed" ? resolution.state.selected_target : undefined,
             occurrenceOrigins,
           ),
-          update_state:
-            resolution.required_download_bytes === 0
+          updateState:
+            resolution.requiredDownloadBytes === 0
               ? ({ _tag: "Current" } satisfies CatalogModelUpdate)
               : {
                   _tag: "Available",
-                  required_download_bytes: resolution.required_download_bytes,
+                  requiredDownloadBytes: resolution.requiredDownloadBytes,
                 },
         }
   return {
     id: catalogId(definition),
     desired: readyModel(definition.configuration.bundle, definition.configuration.profile),
-    display_name: definition.display_name,
-    variant_label: definition.variant_label,
+    displayName: definition.displayName,
+    variantLabel: definition.variantLabel,
     description: definition.description,
-    release_date: definition.release_date,
+    releaseDate: definition.releaseDate,
     license: definition.license,
-    source_urls: sourceUrls,
+    sourceUrls: sourceUrls,
     parameterization: definition.parameterization,
     intelligence: definition.intelligence,
-    fidelity_rank: definition.fidelity_rank,
-    quantization_aware: definition.quantization_aware,
-    local_state: localState,
+    fidelityRank: definition.fidelityRank,
+    quantizationAware: definition.quantizationAware,
+    localState: localState,
   }
 }
 
@@ -288,7 +293,7 @@ export class ModelDomainResolver {
     readonly inventory: {
       installedPackagesResponse(): {
         revision: number
-        reconciliation_complete: boolean
+        reconciliationComplete: boolean
         packages: readonly InstalledModelPackage[]
       }
       catalogAffiliations(): readonly CatalogPackageAffiliation[]
@@ -311,7 +316,7 @@ export class ModelDomainResolver {
 
   catalogSnapshot(): {
     revision: number
-    reconciliation_complete: boolean
+    reconciliationComplete: boolean
     models: CatalogModel[]
   } {
     const installed = this.inventory.installedPackagesResponse()
@@ -320,7 +325,7 @@ export class ModelDomainResolver {
     const occurrenceOrigins = this.inventory.installedOrigins?.() ?? new Map()
     return {
       revision: installed.revision,
-      reconciliation_complete: installed.reconciliation_complete,
+      reconciliationComplete: installed.reconciliationComplete,
       models: this.catalog.models.map((definition) =>
         catalogModel(definition, present, affiliations, occurrenceOrigins),
       ),
@@ -338,16 +343,16 @@ export class ModelDomainResolver {
             catalogPackages(definition).some(([package_]) => package_.id === entry.package.id) ||
             affiliations.some(
               (affiliation) =>
-                affiliation.model_id === definition.model_id &&
-                affiliation.variant_id === definition.variant_id &&
-                affiliation.package_id === entry.package.id,
+                affiliation.modelId === definition.modelId &&
+                affiliation.variantId === definition.variantId &&
+                affiliation.packageId === entry.package.id,
             ),
         )
         .map((entry) => entry.package.id),
     )
     const externalIds = new Set(
       installed.packages
-        .filter((entry) => ids.has(entry.package.id) && entry.origin === "hugging_face_cache")
+        .filter((entry) => ids.has(entry.package.id) && entry.origin === "HuggingFaceCache")
         .map((entry) => entry.package.id),
     )
     const sharedIds = new Set(
@@ -355,9 +360,9 @@ export class ModelDomainResolver {
         (packageId) =>
           affiliations.some(
             (affiliation) =>
-              affiliation.package_id === packageId &&
-              (affiliation.model_id !== definition.model_id ||
-                affiliation.variant_id !== definition.variant_id),
+              affiliation.packageId === packageId &&
+              (affiliation.modelId !== definition.modelId ||
+                affiliation.variantId !== definition.variantId),
           ) ||
           this.catalog.models.some(
             (candidate) =>
@@ -372,9 +377,9 @@ export class ModelDomainResolver {
           packageId === catalogTarget(definition).id ||
           affiliations.some(
             (affiliation) =>
-              affiliation.model_id === definition.model_id &&
-              affiliation.variant_id === definition.variant_id &&
-              affiliation.package_id === packageId &&
+              affiliation.modelId === definition.modelId &&
+              affiliation.variantId === definition.variantId &&
+              affiliation.packageId === packageId &&
               affiliation.role === "Target",
           ),
       ),
@@ -388,12 +393,12 @@ export class ModelDomainResolver {
     const present = new Map(installed.packages.map((entry) => [entry.package.id, entry]))
     const affiliations = this.inventory.catalogAffiliations()
     const resolution = catalogResolution(definition, present, affiliations)
-    if (resolution.missing_desired_package_ids.length > 0) {
+    if (resolution.missingDesiredPackageIds.length > 0) {
       return []
     }
-    return resolution.superseded_package_ids.filter(
+    return resolution.supersededPackageIds.filter(
       (packageId) =>
-        present.get(packageId)?.origin === "magnitude" &&
+        present.get(packageId)?.origin === "Magnitude" &&
         !this.catalog.models.some(
           (candidate) =>
             catalogId(candidate) !== id &&
@@ -401,9 +406,9 @@ export class ModelDomainResolver {
         ) &&
         !affiliations.some(
           (affiliation) =>
-            affiliation.package_id === packageId &&
-            (affiliation.model_id !== definition.model_id ||
-              affiliation.variant_id !== definition.variant_id),
+            affiliation.packageId === packageId &&
+            (affiliation.modelId !== definition.modelId ||
+              affiliation.variantId !== definition.variantId),
         ),
     )
   }
@@ -412,13 +417,13 @@ export class ModelDomainResolver {
 export class ManagedCatalogModels {
   constructor(private readonly resolver: ModelDomainResolver) {}
 
-  listCatalog(): { revision: number; reconciliation_complete: boolean; models: CatalogModel[] } {
+  listCatalog(): { revision: number; reconciliationComplete: boolean; models: CatalogModel[] } {
     const installed = this.resolver.inventory.installedPackagesResponse()
     const present = new Map(installed.packages.map((entry) => [entry.package.id, entry]))
     const affiliations = this.resolver.inventory.catalogAffiliations()
     return {
       revision: installed.revision,
-      reconciliation_complete: installed.reconciliation_complete,
+      reconciliationComplete: installed.reconciliationComplete,
       models: this.resolver.catalog.models.map((definition) =>
         catalogModel(definition, present, affiliations, new Map()),
       ),
@@ -428,17 +433,17 @@ export class ManagedCatalogModels {
 
 export const testDefinition = (
   bundle: ServableModelBundle,
-  profile: ServingProfile = { context_length: 32_768 },
+  profile: ServingProfile = { contextLength: 32_768 },
 ): RecommendableModel => ({
-  model_id: CatalogBaseId.new("catalog"),
-  variant_id: CatalogVariantId.new("gguf:q4"),
+  modelId: catalogBaseId("catalog") as CatalogBaseId,
+  variantId: catalogVariantId("gguf:q4") as CatalogVariantId,
   configuration: { bundle, profile },
-  display_name: "Catalog",
-  variant_label: "Q4",
+  displayName: "Catalog",
+  variantLabel: "Q4",
   description: "Catalog model",
-  release_date: ModelReleaseDate.new("2026-01-01"),
+  releaseDate: modelReleaseDate("2026-01-01") as import("@magnitudedev/icn-contracts").ModelReleaseDate,
   license: "test",
-  parameterization: { architecture: "dense", totalParameters: 1_000_000 },
+  parameterization: { architecture: "dense", totalParameters: 1_000_000n },
   intelligence: {
     score: 1,
     provenance: {
@@ -448,20 +453,20 @@ export const testDefinition = (
       url: "https://example.com/model",
     },
   },
-  fidelity_rank: 1,
-  quantization_aware: false,
+  fidelityRank: 1,
+  quantizationAware: false,
 })
 
 export const testPackage = (id: string, bytes: number): ModelPackage => ({
-  id: id as ModelPackageId,
+  id: modelPackageId(id),
   source: { _tag: "Local", path: `/${id}.gguf` },
   files: [
     {
-      id: `file-${id}` as import("./_contracts-shim").ModelFileId,
+      id: modelFileId(`file-${id}`) ,
       path: `${id}.gguf`,
       role: "weights",
-      size_bytes: bytes,
-      tensor_storage_bytes: bytes,
+      sizeBytes: bytes,
+      tensorStorageBytes: Option.some(bytes),
       sha256: "a".repeat(64),
     },
   ],
@@ -469,32 +474,32 @@ export const testPackage = (id: string, bytes: number): ModelPackage => ({
   properties: {
     format: "gguf",
     quantization: "Q4_K_M",
-    quantization_name: "4-bit",
+    quantizationName: "4-bit",
     architecture: "test",
-    maximum_context_length: 32_768,
-    intrinsic_model_id: "catalog",
-    intrinsic_quality_id: "Q4",
+    maximumContextLength: Option.some(32_768),
+    intrinsicModelId: Option.some("catalog"),
+    intrinsicQualityId: Option.some("Q4"),
   },
 })
 
 export const testInstalled = (
   package_: ModelPackage,
-  origin: ModelPackageInstallationOrigin = "magnitude",
+  origin: ModelPackageInstallationOrigin = "Magnitude",
 ): InstalledModelPackage => ({
   path: `/installed/${package_.id}`,
   package: package_,
   origin,
   validation: { _tag: "Valid" },
-  catalog_attribution: { _tag: "NotCatalogTarget" },
+  catalogAttribution: { _tag: "NotCatalogTarget" },
 })
 
 export const testAffiliation = (
   packageId: ModelPackageId,
   role: CatalogPackageRole,
 ): CatalogPackageAffiliation => ({
-  model_id: CatalogBaseId.new("catalog"),
-  variant_id: CatalogVariantId.new("gguf:q4"),
-  package_id: packageId,
+  modelId: catalogBaseId("catalog") as CatalogBaseId,
+  variantId: catalogVariantId("gguf:q4") as CatalogVariantId,
+  packageId: packageId,
   repository: "owner/repo",
   role,
 })

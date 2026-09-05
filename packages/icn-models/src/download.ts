@@ -1,8 +1,13 @@
+import { Option } from "effect"
 import { createHash } from "node:crypto"
-import { closeSync, ftruncateSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
+import { closeSync, ftruncateSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync, appendFileSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
 import { lstatSync } from "node:fs"
-import { ContentIdentity, type DownloadFailure, type ModelComponent } from "./_contracts-shim"
+import {
+  contentIdentity,
+  type DownloadFailure,
+  type ModelComponent,
+} from "@magnitudedev/icn-contracts"
 import { ensureOwnedDirectory } from "./store-fs"
 import { quarantineOwnedPathSync } from "./store-fs"
 
@@ -16,7 +21,7 @@ export interface DownloadComponentPaths {
 }
 
 export interface DownloadIntegrityRecord {
-  content: ContentIdentity
+  content: ModelComponent["content"]
   expected_size: number
   completed_bytes: number
   sha256_state: string | null
@@ -34,7 +39,7 @@ export class DownloadIntegrity {
   }
 
   static empty(component: ModelComponent): DownloadIntegrity {
-    const digest = component.content._tag === "Sha256" ? createHash("sha256") : null
+    const digest = component.content.type === "sha256" ? createHash("sha256") : null
     return new DownloadIntegrity(digest, 0, 0)
   }
 
@@ -43,17 +48,18 @@ export class DownloadIntegrity {
     record: DownloadIntegrityRecord,
     partialBytes?: Uint8Array,
   ): DownloadIntegrity | undefined {
+    const componentSize = Number(component.size_bytes)
     if (
-      !ContentIdentity.equals(record.content, component.content) ||
-      record.expected_size !== component.size_bytes ||
-      record.completed_bytes > component.size_bytes
+      !contentIdentity.equals(record.content, component.content) ||
+      record.expected_size !== componentSize ||
+      record.completed_bytes > componentSize
     ) {
       return undefined
     }
-    const digest = component.content._tag === "Sha256" ? createHash("sha256") : null
+    const digest = component.content.type === "sha256" ? createHash("sha256") : null
     if (digest !== null && partialBytes !== undefined && partialBytes.length === record.completed_bytes) {
       digest.update(partialBytes)
-    } else if (record.completed_bytes > 0 && component.content._tag === "Sha256") {
+    } else if (record.completed_bytes > 0 && component.content.type === "sha256") {
       return undefined
     }
     return new DownloadIntegrity(digest, record.completed_bytes, record.completed_bytes)
@@ -67,7 +73,7 @@ export class DownloadIntegrity {
   record(component: ModelComponent): DownloadIntegrityRecord {
     return {
       content: component.content,
-      expected_size: component.size_bytes,
+      expected_size: Number(component.size_bytes),
       completed_bytes: this.bytes,
       sha256_state: this.digest !== null && this.bytes === 0 ? "" : null,
     }
@@ -82,10 +88,10 @@ export class DownloadIntegrity {
   }
 
   verify(component: ModelComponent): DownloadError | undefined {
-    if (this.bytes !== component.size_bytes) {
+    if (this.bytes !== Number(component.size_bytes)) {
       return DownloadError.integrity(`unexpected size for ${component.path}`)
     }
-    if (component.content._tag !== "Sha256") {
+    if (component.content.type !== "sha256") {
       return undefined
     }
     const actual = this.digest?.digest("hex")
@@ -112,17 +118,24 @@ export class DownloadError extends Error {
   readonly kind: DownloadErrorKind
   readonly retryable: boolean
   readonly resumable: boolean
+  readonly requiredBytes?: number
+  readonly availableBytes?: number
 
-  private constructor(
+  constructor(
     kind: DownloadErrorKind,
     message: string,
     retryable: boolean,
     resumable: boolean,
+    diskSpace?: { requiredBytes: number; availableBytes: number },
   ) {
     super(message)
     this.kind = kind
     this.retryable = retryable
     this.resumable = resumable
+    if (diskSpace !== undefined) {
+      this.requiredBytes = diskSpace.requiredBytes
+      this.availableBytes = diskSpace.availableBytes
+    }
   }
 
   static integrity(message: string, retryable = true, resumable = true): DownloadError {
@@ -137,12 +150,27 @@ export class DownloadError extends Error {
     return new DownloadError("SourceUnavailable", message, retryable, resumable)
   }
 
+  static cancelled(): DownloadError {
+    return new DownloadError("Cancelled", "download was cancelled", false, true)
+  }
+
+  static insufficientDiskSpace(requiredBytes: number, availableBytes: number): DownloadError {
+    return new DownloadError("InsufficientDiskSpace", "insufficient disk space", false, true, {
+      requiredBytes,
+      availableBytes,
+    })
+  }
+
   toFailure(): DownloadFailure | undefined {
     switch (this.kind) {
       case "Cancelled":
         return undefined
       case "InsufficientDiskSpace":
-        return undefined
+        return {
+          _tag: "InsufficientDiskSpace",
+          requiredBytes: this.requiredBytes ?? 0,
+          availableBytes: this.availableBytes ?? 0,
+        }
       case "SourceUnavailable":
       case "SourceAccessDenied":
       case "MissingSource":
@@ -160,17 +188,17 @@ export class DownloadError extends Error {
   }
 }
 
-export const blobKey = (content: ContentIdentity): string => {
-  switch (content._tag) {
-    case "Sha256":
+export const blobKey = (content: ModelComponent["content"]): string => {
+  switch (content.type) {
+    case "sha256":
       return `lfs-sha256-${content.value}`
-    case "Xet":
+    case "xet":
       return `xet-${content.value}`
-    case "GitOid":
+    case "git_oid":
       return `git-oid-${content.value}`
-    case "FileIdentity":
+    case "file_identity":
       return `file-${content.value}`
-    case "Unknown":
+    case "unknown":
       return "unknown"
   }
 }
@@ -285,8 +313,9 @@ export const recoverCompletedBlob = async (
   paths: DownloadComponentPaths,
   component: ModelComponent,
 ): Promise<boolean> => {
+  const componentSize = Number(component.size_bytes)
   const blobLen = regularFileLen(paths.blob)
-  if (blobLen !== component.size_bytes) {
+  if (blobLen !== componentSize) {
     await discardComponentFiles(paths)
     return false
   }
@@ -296,7 +325,7 @@ export const recoverCompletedBlob = async (
   const restored = record === undefined ? undefined : DownloadIntegrity.restore(component, record, partialBytes)
   if (
     restored !== undefined &&
-    restored.bytes === component.size_bytes &&
+    restored.bytes === componentSize &&
     restored.verify(component) === undefined
   ) {
     return true
@@ -317,12 +346,13 @@ export const validateEquivalentFile = (
   expected: ModelComponent,
   metadata: ResolvedRemoteMetadata,
 ): DownloadError | undefined => {
-  if (metadata.size !== expected.size_bytes) {
+  const expectedSize = Number(expected.size_bytes)
+  if (metadata.size !== expectedSize) {
     return packageUnavailable(repository, pinned, observed, expected.path, "current main reports a different file size")
   }
   if (
     metadata.sha256 === null ||
-    (expected.content._tag === "Sha256" &&
+    (expected.content.type === "sha256" &&
       metadata.sha256.toLowerCase() !== expected.content.value.toLowerCase())
   ) {
     return packageUnavailable(repository, pinned, observed, expected.path, "current main reports different file content")
@@ -444,6 +474,199 @@ const syncDirectory = async (path: string): Promise<void> => {
     fsyncSync(fd)
   } finally {
     closeSync(fd)
+  }
+}
+
+export const MAX_DOWNLOAD_ATTEMPTS = 5
+
+export const packageDownloadKey = (package_: { readonly id: string } & Record<string, unknown>): string =>
+  createHash("sha256").update(JSON.stringify(package_)).digest("hex")
+
+const stubComponent = (
+  content: ModelComponent["content"],
+  expectedSize: number,
+): ModelComponent => ({
+  path: "",
+  role: "weights",
+  size_bytes: BigInt(expectedSize),
+  content,
+  shard_index: Option.none(),
+  relationship: Option.none(),
+})
+
+export const recoverableDownloadBytes = (
+  paths: DownloadComponentPaths,
+  content: ModelComponent["content"],
+  expectedSize: number,
+): number => {
+  const record = readIntegrityRecord(paths.checkpoint)
+  if (
+    regularFileLen(paths.blob) === expectedSize &&
+    record !== undefined &&
+    DownloadIntegrity.restore(stubComponent(content, expectedSize), record, readFileSync(paths.blob))
+      ?.bytes === expectedSize
+  ) {
+    return expectedSize
+  }
+  const partialLen = regularFileLen(paths.partial)
+  if (partialLen === undefined || record === undefined) {
+    return 0
+  }
+  const restored = DownloadIntegrity.restore(
+    stubComponent(content, expectedSize),
+    record,
+    partialLen > 0 ? readFileSync(paths.partial).subarray(0, record.completed_bytes) : undefined,
+  )
+  if (restored === undefined || restored.bytes > partialLen) {
+    return 0
+  }
+  return restored.bytes
+}
+
+export const componentPartialLen = (repoRoot: string, component: ModelComponent): number => {
+  const paths = componentPaths(join(repoRoot, "blobs"), blobKey(component.content))
+  return recoverableDownloadBytes(paths, component.content, Number(component.size_bytes))
+}
+
+export const resumableBytes = (repoRoot: string, components: readonly ModelComponent[]): number =>
+  components.reduce((total, component) => total + componentPartialLen(repoRoot, component), 0)
+
+export const persistIntegrityCheckpoint = async (
+  paths: DownloadComponentPaths,
+  component: ModelComponent,
+  integrity: DownloadIntegrity,
+): Promise<void> => {
+  if (integrity.bytes === integrity.checkpointedBytes) {
+    return
+  }
+  if (exists(paths.partial)) {
+    const fd = openSync(paths.partial, "r+")
+    try {
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+  }
+  await atomicJson(paths.checkpoint, integrity.record(component))
+  integrity.markCheckpointed()
+}
+
+export const publishVerifiedBlob = async (paths: DownloadComponentPaths): Promise<void> => {
+  renameSync(paths.partial, paths.blob)
+  await syncParent(paths.blob)
+}
+
+export const downloadComponentOnce = async (
+  http: import("./download-http.js").ModelDownloadHttpClient,
+  repository: string,
+  commit: string,
+  component: ModelComponent,
+  paths: DownloadComponentPaths,
+  integrity: DownloadIntegrity,
+  cancelled: () => boolean,
+  onProgress: (completed: number, stage: import("@magnitudedev/icn-contracts").DownloadStage) => void,
+): Promise<void> => {
+  let offset = integrity.bytes
+  const partialLen = regularFileLen(paths.partial) ?? 0
+  const componentSize = Number(component.size_bytes)
+  if (partialLen > offset) {
+    truncateFile(paths.partial, offset)
+  } else if (partialLen < offset) {
+    throw DownloadError.integrity(
+      `partial download is shorter than verified progress for ${component.path}`,
+      true,
+      false,
+    )
+  }
+  if (offset === componentSize) {
+    onProgress(componentSize, "verifying")
+    const verifyError = integrity.verify(component)
+    if (verifyError !== undefined) {
+      await discardComponentFiles(paths)
+      throw verifyError
+    }
+    await publishVerifiedBlob(paths)
+    return
+  }
+
+  if (!exists(paths.partial)) {
+    mkdirSync(dirname(paths.partial), { recursive: true })
+    writeFileSync(paths.partial, new Uint8Array())
+  }
+  while (offset < componentSize) {
+    if (cancelled()) {
+      await persistIntegrityCheckpoint(paths, component, integrity)
+      throw DownloadError.cancelled()
+    }
+    const chunk = await http.fetchFileRange({
+      repository,
+      commit,
+      path: component.path,
+      offset,
+      length: componentSize - offset,
+    })
+    if (cancelled()) {
+      await persistIntegrityCheckpoint(paths, component, integrity)
+      throw DownloadError.cancelled()
+    }
+    if (offset + chunk.length > componentSize) {
+      throw DownloadError.integrity(`download exceeded expected size for ${component.path}`)
+    }
+    appendFileSync(paths.partial, chunk)
+    integrity.update(chunk)
+    offset += chunk.length
+    onProgress(offset, "downloading")
+    if (integrity.needsCheckpoint()) {
+      await persistIntegrityCheckpoint(paths, component, integrity)
+    }
+  }
+  await persistIntegrityCheckpoint(paths, component, integrity)
+  onProgress(componentSize, "verifying")
+  const verifyError = integrity.verify(component)
+  if (verifyError !== undefined) {
+    await discardComponentFiles(paths)
+    throw verifyError
+  }
+  await publishVerifiedBlob(paths)
+}
+
+export const downloadComponentWithRetry = async (
+  http: import("./download-http.js").ModelDownloadHttpClient,
+  repository: string,
+  commit: string,
+  component: ModelComponent,
+  repoRoot: string,
+  cancelled: () => boolean,
+  onProgress: (completed: number, stage: import("@magnitudedev/icn-contracts").DownloadStage) => void,
+): Promise<void> => {
+  const paths = componentPaths(join(repoRoot, "blobs"), blobKey(component.content))
+  if (await recoverCompletedBlob(paths, component)) {
+    onProgress(Number(component.size_bytes), "verifying")
+    return
+  }
+  let integrity = await recoverPartial(paths, component)
+  onProgress(integrity.bytes, "downloading")
+  for (let attempt = 0; attempt < MAX_DOWNLOAD_ATTEMPTS; attempt += 1) {
+    if (cancelled()) {
+      await persistIntegrityCheckpoint(paths, component, integrity)
+      throw DownloadError.cancelled()
+    }
+    try {
+      await downloadComponentOnce(http, repository, commit, component, paths, integrity, cancelled, onProgress)
+      return
+    } catch (error) {
+      if (!(error instanceof DownloadError)) {
+        throw error
+      }
+      if (error.kind === "Cancelled") {
+        throw error
+      }
+      if (!error.retryable || attempt + 1 >= MAX_DOWNLOAD_ATTEMPTS) {
+        throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** Math.min(attempt, 4)))
+      integrity = await recoverPartial(paths, component)
+    }
   }
 }
 

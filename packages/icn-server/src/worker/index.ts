@@ -114,3 +114,7 @@ export const workerCommand = (
   }
   return [subcommand, "--development-runtime"]
 }
+
+export * from "./protocol.js"
+export * from "./ipc.js"
+export * from "./runner.js"

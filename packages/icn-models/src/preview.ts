@@ -1,11 +1,13 @@
+import { Option } from "effect"
 import {
-  ComponentRole,
-  ContentIdentity,
+  contentIdentity,
+  type ComponentRole,
+  type ContentIdentity,
   type HuggingFaceModelSearchResult,
   type HuggingFaceRepositorySnapshot,
   type InventoryError,
   type ModelPreviewSource,
-} from "./_contracts-shim"
+} from "@magnitudedev/icn-contracts"
 import { requireRequestedRevision } from "./hugging-face"
 
 export interface PreparedPreviewHeader {
@@ -99,9 +101,9 @@ export const hubSearchModelToContract = (model: HubSearchModel): HuggingFaceMode
   return {
     repository: model.id,
     commit,
-    last_modified: model.lastModified ?? null,
-    downloads: model.downloads ?? null,
-    likes: model.likes ?? null,
+    last_modified: Option.fromNullable(model.lastModified),
+    downloads: Option.fromNullable(model.downloads !== undefined ? BigInt(model.downloads) : undefined),
+    likes: Option.fromNullable(model.likes !== undefined ? BigInt(model.likes) : undefined),
     gated: hubGated(model.gated),
     private: model.private ?? false,
     tags: model.tags ?? [],
@@ -122,10 +124,10 @@ export const hubModelToSnapshot = (
     .filter((sibling) => validGgufPath(sibling.rfilename))
     .map((sibling) => ({
       path: sibling.rfilename,
-      size_bytes: sibling.size ?? sibling.lfs?.size ?? 0,
+      size_bytes: BigInt(sibling.size ?? sibling.lfs?.size ?? 0),
       content: sibling.lfs
-        ? ContentIdentity.Sha256(sibling.lfs.sha256)
-        : ContentIdentity.Unknown(),
+        ? contentIdentity.sha256(sibling.lfs.sha256)
+        : contentIdentity.unknown(),
     }))
     .sort((left, right) => left.path.localeCompare(right.path))
   if (ggufFiles.length === 0) {
@@ -134,13 +136,13 @@ export const hubModelToSnapshot = (
   return {
     repository: model.id ?? requestedRepository,
     commit,
-    last_modified: model.lastModified ?? null,
-    downloads: model.downloads ?? null,
-    likes: model.likes ?? null,
+    last_modified: Option.fromNullable(model.lastModified),
+    downloads: Option.fromNullable(model.downloads !== undefined ? BigInt(model.downloads) : undefined),
+    likes: Option.fromNullable(model.likes !== undefined ? BigInt(model.likes) : undefined),
     gated: hubGated(model.gated),
     private: model.private ?? false,
-    license: null,
-    license_url: null,
+    license: Option.none(),
+    license_url: Option.none(),
     base_models: [],
     tags: model.tags ?? [],
     gguf_files: ggufFiles,
@@ -172,7 +174,7 @@ export const selectRepositorySnapshotComponents = (
     const shardMatch = file.path.match(/-(\d{5})-of-(\d{5})\.gguf$/)
     return {
       path: file.path,
-      role: shardMatch === null || file.path === source.primary_gguf ? "Weights" : "Shard",
+      role: shardMatch === null || file.path === source.primary_gguf ? "weights" : "shard",
       size_bytes: file.size_bytes,
       content: file.content,
       shard_index: shardMatch === null ? undefined : Number(shardMatch[1]),

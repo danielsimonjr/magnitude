@@ -1,6 +1,6 @@
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, renameSync, rmSync } from "node:fs"
 import { dirname } from "node:path"
-import { InventoryError } from "./_contracts-shim"
+import { InventoryError } from "@magnitudedev/icn-contracts"
 import { ensureOwnedDirectorySync as ensureOwnedDirectorySyncImpl } from "./store-fs-internal"
 
 let quarantineSequence = 0

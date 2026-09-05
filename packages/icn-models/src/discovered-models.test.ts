@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { CatalogBaseId, CatalogVariantId } from "./_contracts-shim"
+import { catalogBaseId, catalogVariantId, ModelIdError } from "@magnitudedev/icn-contracts"
 import { type InstalledPackageSnapshot } from "./inventory"
 import { discoveredModels, discoveryRecord, selectedDiscoveredPackages } from "./discovered-models"
 
@@ -70,8 +70,12 @@ describe("discovered-models", () => {
       "package",
       {
         _tag: "Attributed",
-        model_id: CatalogBaseId.new("catalog"),
-        variant_id: CatalogVariantId.new("gguf:q4"),
+        modelId: (catalogBaseId("catalog") as Exclude<ReturnType<typeof catalogBaseId>, import("@magnitudedev/icn-contracts").ModelIdError>),
+        variantId: (() => {
+          const variant = catalogVariantId("gguf:q4")
+          if (variant instanceof ModelIdError) throw variant
+          return variant
+        })(),
       },
     )
     expect(

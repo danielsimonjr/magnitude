@@ -1,17 +1,19 @@
+import { Option } from "effect"
 import { createReadStream } from "node:fs"
-import { basename, dirname, join } from "node:path"
+import { dirname } from "node:path"
 import { createHash } from "node:crypto"
 import { sha256 } from "@noble/hashes/sha2.js"
 import { bytesToHex } from "@noble/hashes/utils.js"
 import {
-  ComponentRole,
-  ContentIdentity,
+  contentIdentity,
   InventoryError,
+  modelLocationComponents,
+  modelFileId,
+  modelPackageId,
   type ComponentRelationship,
-  type ContentId,
+  type ComponentRole,
+  type ContentIdentity,
   type InventoryModel,
-  type InventoryProperties,
-  type ModelAvailability,
   type ModelComponent,
   type ModelFile,
   type ModelFileId,
@@ -23,11 +25,8 @@ import {
   type ModelPackageSource,
   type PackageValidation,
   type ResolvedModel,
-  modelLocationComponents,
   type SpeculativeMethod,
-  ModelFileId as ModelFileIdBrand,
-  ModelPackageId as ModelPackageIdBrand,
-} from "./_contracts-shim"
+} from "@magnitudedev/icn-contracts"
 import { inspect, type GgufInspection } from "./gguf"
 
 export class ServableModelBundleKey {
@@ -53,17 +52,17 @@ export const canonicalPackageId = (
     digest.update(new TextEncoder().encode(JSON.stringify(relationship)))
     digest.update(new Uint8Array([0]))
   }
-  return ModelPackageIdBrand(`package_${bytesToHex(digest.digest())}`)
+  return modelPackageId(`package_${bytesToHex(digest.digest())}`)
 }
 
 export const servingConfigurationFingerprint = (
   bundleKey: ServableModelBundleKey,
-  profile: { context_length: number },
+  profile: { contextLength: number },
 ): string => {
   const digest = sha256.create()
   digest.update(new TextEncoder().encode(bundleKey.value))
   const context = new Uint8Array(4)
-  new DataView(context.buffer).setUint32(0, profile.context_length, true)
+  new DataView(context.buffer).setUint32(0, profile.contextLength, true)
   digest.update(context)
   return bytesToHex(digest.digest())
 }
@@ -105,15 +104,14 @@ export const servableModelBundleKeyForBundle = (
     | {
         readonly _tag: "SpeculativeDecoding"
         target: ModelPackage
-        draft_source: { readonly _tag: "Embedded" } | { readonly _tag: "Separate"; draft: ModelPackage }
+        draftSource: { readonly _tag: "Embedded" } | { readonly _tag: "Separate"; draft: ModelPackage }
         method: SpeculativeMethod
       },
 ): ServableModelBundleKey => {
   if (bundle._tag === "Standalone") {
     return servableModelBundleKey([bundle.package.id])
   }
-  const draft =
-    bundle.draft_source._tag === "Separate" ? bundle.draft_source.draft.id : undefined
+  const draft = bundle.draftSource._tag === "Separate" ? bundle.draftSource.draft.id : undefined
   return speculativeServableModelBundleKey(bundle.target.id, draft, bundle.method)
 }
 
@@ -121,38 +119,48 @@ export const packageRelationship = (
   relationship: ComponentRelationship,
   idsByDeclaredPath: Map<string, ModelFileId>,
 ): ModelFileRelationship | undefined => {
-  switch (relationship._tag) {
-    case "ProjectorFor": {
+  switch (relationship.type) {
+    case "projector_for": {
       const projector = idsByDeclaredPath.get(relationship.projector)
       const model = idsByDeclaredPath.get(relationship.model)
       if (projector === undefined || model === undefined) return undefined
-      return { _tag: "ProjectorFor", projector_file_id: projector, weights_file_id: model }
+      return { _tag: "ProjectorFor", projectorFileId: projector, weightsFileId: model }
     }
-    case "MtpFor": {
+    case "mtp_for": {
       const mtp = idsByDeclaredPath.get(relationship.mtp)
       const model = idsByDeclaredPath.get(relationship.model)
       if (mtp === undefined || model === undefined) return undefined
-      return { _tag: "MtpFor", mtp_file_id: mtp, weights_file_id: model }
+      return { _tag: "MtpFor", mtpFileId: mtp, weightsFileId: model }
     }
-    case "DraftFor": {
+    case "draft_for": {
       const draft = idsByDeclaredPath.get(relationship.draft)
       const model = idsByDeclaredPath.get(relationship.model)
       if (draft === undefined || model === undefined) return undefined
       return {
         _tag: "DraftFor",
-        draft_file_id: draft,
-        weights_file_id: model,
+        draftFileId: draft,
+        weightsFileId: model,
         method: relationship.method,
       }
     }
   }
 }
 
-export const shardCount = (indices: Iterable<number | undefined>): number => {
+export const shardCount = (
+  indices: Iterable<number | Option.Option<number> | undefined>,
+): number => {
   let max = 0
   for (const index of indices) {
-    if (index !== undefined && index > max) {
-      max = index
+    const value =
+      index === undefined
+        ? undefined
+        : typeof index === "number"
+          ? index
+          : Option.isOption(index) && Option.isSome(index)
+            ? index.value
+            : undefined
+    if (value !== undefined && value > max) {
+      max = value
     }
   }
   return max
@@ -167,8 +175,8 @@ export const packageValidationFor = (
   model: InventoryModel,
   package_: ModelPackage,
 ): PackageValidation => {
-  switch (model.availability._tag) {
-    case "InvalidArtifact":
+  switch (model.availability.type) {
+    case "invalid_artifact":
       return {
         _tag: "Invalid",
         failure: {
@@ -177,7 +185,7 @@ export const packageValidationFor = (
           retryable: false,
         },
       }
-    case "IncompatibleArtifact":
+    case "incompatible_artifact":
       return {
         _tag: "Unsupported",
         failure: {
@@ -190,10 +198,10 @@ export const packageValidationFor = (
       break
   }
 
-  switch (model.properties._tag) {
-    case "Pending":
+  switch (model.properties.type) {
+    case "pending":
       return { _tag: "Pending" }
-    case "Unavailable":
+    case "unavailable":
       return {
         _tag: "Invalid",
         failure: {
@@ -202,7 +210,7 @@ export const packageValidationFor = (
           retryable: true,
         },
       }
-    case "Inspected": {
+    case "inspected": {
       const projectors = package_.files.filter((file) => file.role === "projector")
       if (projectors.length === 0) {
         return { _tag: "Valid" }
@@ -213,13 +221,13 @@ export const packageValidationFor = (
           "a model package may contain at most one multimodal projector",
         )
       }
-      const projector = projectors[0]
+      const projector = projectors[0]!
       const related = package_.relationships.some(
         (relationship) =>
           relationship._tag === "ProjectorFor" &&
-          relationship.projector_file_id === projector.id &&
+          relationship.projectorFileId === projector.id &&
           package_.files.some(
-            (file) => file.id === relationship.weights_file_id && file.role === "weights",
+            (file) => file.id === relationship.weightsFileId && file.role === "weights",
           ),
       )
       if (!related) {
@@ -244,26 +252,26 @@ const digestFile = async (path: string): Promise<string> =>
     stream.on("end", () => resolve(hash.digest("hex")))
   })
 
-const fileId = (sha256Hex: string): ModelFileId => ModelFileIdBrand(`file_${sha256Hex}`)
+const fileId = (sha256Hex: string): ModelFileId => modelFileId(`file_${sha256Hex}`)
 
 const toModelFileRole = (role: ComponentRole): ModelFileRole => {
   switch (role) {
-    case "Weights":
-    case "Shard":
+    case "weights":
+    case "shard":
       return "weights"
-    case "Projector":
+    case "projector":
       return "projector"
-    case "Draft":
+    case "draft":
       return "draft"
-    case "Mtp":
+    case "mtp":
       return "mtp"
-    case "Auxiliary":
+    case "auxiliary":
       return "auxiliary"
   }
 }
 
 const packageSource = (model: InventoryModel, resolved: ResolvedModel): ModelPackageSource => {
-  if (model.source._tag === "HuggingFace") {
+  if (model.source.type === "hugging_face") {
     return {
       _tag: "HuggingFace",
       repository: model.source.repository,
@@ -271,9 +279,9 @@ const packageSource = (model: InventoryModel, resolved: ResolvedModel): ModelPac
     }
   }
   const root =
-    model.location._tag === "Directory"
+    model.location.type === "directory"
       ? model.location.root
-      : model.location._tag === "File"
+      : model.location.type === "file"
         ? dirname(model.location.path)
         : resolved.components[0]?.path !== undefined
           ? dirname(resolved.components[0].path)
@@ -286,36 +294,36 @@ const packageProperties = (
   inspections: ReadonlyArray<[ComponentRole, GgufInspection]>,
 ): ModelPackageProperties => {
   const inspected = inspections
-    .filter(([role]) => role === "Weights" || role === "Shard")
+    .filter(([role]) => role === "weights" || role === "shard")
     .map(([, inspection]) => inspection)
   const modelIds = new Set(inspected.map((item) => item.name).filter((name): name is string => name !== null))
   const qualityIds = new Set(
     inspected.map((item) => item.quantization).filter((value): value is string => value !== null),
   )
   const complete = inspected.length > 0 && modelIds.size === 1 && qualityIds.size === 1
-  const intrinsic_model_id = complete ? [...modelIds][0] ?? null : null
-  const intrinsic_quality_id = complete ? [...qualityIds][0] ?? null : null
+  const intrinsicModelId = complete ? Option.fromNullable([...modelIds][0]) : Option.none()
+  const intrinsicQualityId = complete ? Option.fromNullable([...qualityIds][0]) : Option.none()
 
-  if (resolved.model.properties._tag === "Inspected") {
+  if (resolved.model.properties.type === "inspected") {
     const properties = resolved.model.properties
     return {
       format: "gguf",
-      quantization: properties.quantization ?? "unknown",
-      quantization_name: properties.quantization_name ?? "unknown",
-      architecture: properties.architecture ?? "unknown",
-      maximum_context_length: properties.training_context_length,
-      intrinsic_model_id,
-      intrinsic_quality_id,
+      quantization: Option.getOrElse(properties.quantization, () => "unknown"),
+      quantizationName: Option.getOrElse(properties.quantization_name, () => "unknown"),
+      architecture: Option.getOrElse(properties.architecture, () => "unknown"),
+      maximumContextLength: properties.training_context_length,
+      intrinsicModelId,
+      intrinsicQualityId,
     }
   }
   return {
     format: "gguf",
     quantization: "unknown",
-    quantization_name: "unknown",
+    quantizationName: "unknown",
     architecture: "unknown",
-    maximum_context_length: null,
-    intrinsic_model_id: null,
-    intrinsic_quality_id: null,
+    maximumContextLength: Option.none(),
+    intrinsicModelId: Option.none(),
+    intrinsicQualityId: Option.none(),
   }
 }
 
@@ -337,11 +345,11 @@ export const packageFromResolvedWith = async (
   const idsByDeclaredPath = new Map<string, ModelFileId>()
   const inspections: Array<[ComponentRole, GgufInspection]> = []
   for (let index = 0; index < declaredComponents.length; index++) {
-    const declared = declaredComponents[index]
+    const declared = declaredComponents[index]!
     const resolvedComponent = resolved.components[index]!
     const absolute = resolvedComponent.path
     const inspection =
-      model.properties._tag === "Inspected"
+      model.properties.type === "inspected"
         ? inspectGguf(absolute, declared.content)
         : undefined
     if (inspection !== undefined) {
@@ -349,7 +357,7 @@ export const packageFromResolvedWith = async (
     }
     let sha256Hex: string
     if (
-      declared.content._tag === "Sha256" &&
+      declared.content.type === "sha256" &&
       declared.content.value.length === 64 &&
       /^[0-9a-f]+$/.test(declared.content.value)
     ) {
@@ -363,8 +371,11 @@ export const packageFromResolvedWith = async (
       id,
       path: declared.path,
       role: toModelFileRole(declared.role),
-      size_bytes: declared.size_bytes,
-      tensor_storage_bytes: inspection?.tensor_storage_bytes ?? null,
+      sizeBytes: Number(declared.size_bytes),
+      tensorStorageBytes:
+        inspection?.tensor_storage_bytes !== undefined
+          ? Option.some(inspection.tensor_storage_bytes)
+          : Option.none(),
       sha256: sha256Hex,
     })
   }
@@ -375,16 +386,16 @@ export const packageFromResolvedWith = async (
   for (const component of declaredComponents) {
     const fileIdValue = idsByDeclaredPath.get(component.path)
     if (fileIdValue === undefined) continue
-    if (component.shard_index !== undefined) {
+    if (Option.isSome(component.shard_index)) {
       relationships.push({
         _tag: "Shard",
-        file_id: fileIdValue,
-        index: component.shard_index,
+        fileId: fileIdValue,
+        index: component.shard_index.value,
         count: Math.max(shardCountValue, 1),
       })
     }
-    if (component.relationship !== undefined) {
-      const relationship = packageRelationship(component.relationship, idsByDeclaredPath)
+    if (Option.isSome(component.relationship)) {
+      const relationship = packageRelationship(component.relationship.value, idsByDeclaredPath)
       if (relationship !== undefined) {
         relationships.push(relationship)
       }

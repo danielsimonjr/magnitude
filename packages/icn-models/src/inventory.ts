@@ -1,14 +1,16 @@
+import { Option } from "effect"
 import { createHash } from "node:crypto"
-import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs"
+import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync, lstatSync } from "node:fs"
 import { basename, dirname, join, relative } from "node:path"
-import { lstatSync } from "node:fs"
 import {
-  InventoryEntryId as InventoryEntryIdBrand,
-  ComponentRole,
-  ContentIdentity,
+  contentIdentity,
   InventoryError,
+  makeInventoryEntryId,
   modelLocationComponents,
+  parseInventoryEntryId,
+  type ComponentRole,
   type ContentId,
+  type ContentIdentity,
   type InstalledCatalogAttribution,
   type InstalledModelPackage,
   type InstalledModelPackagesResponse,
@@ -29,8 +31,16 @@ import {
   type ModelSource,
   type RecommendableModel,
   type ServableModelBundle,
-} from "./_contracts-shim"
+} from "@magnitudedev/icn-contracts"
+import { CatalogAffiliations } from "./catalog-affiliations"
 import { ModelCache, type ModelIndexKind } from "./cache"
+import {
+  cancelPackageDownload as cancelPackageDownloadImpl,
+  createModelStoreDownloadState,
+  startTargetDownloads as startTargetDownloadsImpl,
+  type ModelStoreDownloadOptions,
+  type ModelStoreDownloadState,
+} from "./download-store"
 import { blobKey } from "./download"
 import { inspect } from "./gguf"
 import { contentId, fingerprint, inventoryEntryId } from "./identity"
@@ -43,6 +53,14 @@ import { resolveComponents } from "./service-resolve"
 import { ensureStoreLayout } from "./store-fs"
 import { recoverMap } from "./file-cache"
 import { hfRepoDir } from "./paths"
+
+const parseEntryId = (value: string): InventoryEntryId => {
+  const parsed = parseInventoryEntryId(value)
+  if (typeof parsed === "object" && parsed !== null && "_tag" in parsed) {
+    throw parsed
+  }
+  return parsed
+}
 
 const MAX_SCAN_ENTRIES = 100_000
 const MAX_SCAN_DEPTH = 8
@@ -79,8 +97,8 @@ export const installedPackageSnapshotResponse = (
     const existing = packages.get(record.installed.package.id)
     if (
       existing !== undefined &&
-      existing.origin === "hugging_face_cache" &&
-      record.installed.origin === "magnitude"
+      existing.origin === "HuggingFaceCache" &&
+      record.installed.origin === "Magnitude"
     ) {
       packages.set(record.installed.package.id, record.installed)
     } else if (existing === undefined) {
@@ -88,8 +106,8 @@ export const installedPackageSnapshotResponse = (
     }
   }
   return {
-    revision,
-    reconciliation_complete: reconciliationComplete,
+    revision: BigInt(revision),
+    reconciliationComplete: reconciliationComplete,
     packages: [...packages.values()],
   }
 }
@@ -170,6 +188,7 @@ export interface InventoryScan {
 export class ManagedModelStore {
   readonly config: InventoryConfig
   readonly cache: ModelCache
+  readonly downloadState: ModelStoreDownloadState
   private readonly models = new Map<InventoryEntryId, InventoryModel>()
   private readonly cacheEvidence = new Map<InventoryEntryId, CacheEvidence>()
   private installedPackages: InstalledPackageSnapshot = { records: new Map() }
@@ -179,16 +198,21 @@ export class ManagedModelStore {
   private reconciliationRunning = false
   private reconciliationComplete = false
 
-  private constructor(config: InventoryConfig, cache: ModelCache) {
+  private constructor(config: InventoryConfig, cache: ModelCache, downloadState: ModelStoreDownloadState) {
     this.config = config
     this.cache = cache
+    this.downloadState = downloadState
   }
 
-  static async open(config: InventoryConfig): Promise<ManagedModelStore> {
+  static async open(
+    config: InventoryConfig,
+    downloadOptions: ModelStoreDownloadOptions = {},
+  ): Promise<ManagedModelStore> {
     validateConfig(config)
     await ensureStoreLayout(config.root)
     const cache = new ModelCache(config.cache_root)
-    const manager = new ManagedModelStore(config, cache)
+    const downloadState = createModelStoreDownloadState(config.max_concurrent_downloads, downloadOptions)
+    const manager = new ManagedModelStore(config, cache, downloadState)
     return manager
   }
 
@@ -287,12 +311,12 @@ export class ManagedModelStore {
     const models = [...this.models.values()]
     models.sort((left, right) => {
       const rank = (model: InventoryModel): number => {
-        switch (model.availability._tag) {
-          case "Available":
+        switch (model.availability.type) {
+          case "available":
             return 0
-          case "Downloading":
+          case "downloading":
             return 1
-          case "Interrupted":
+          case "interrupted":
             return 2
           default:
             return 3
@@ -319,6 +343,18 @@ export class ManagedModelStore {
     )
   }
 
+  installedPackageSnapshot(): InstalledPackageSnapshot {
+    return this.installedPackages
+  }
+
+  catalogAffiliations(): readonly import("@magnitudedev/icn-contracts").CatalogPackageAffiliation[] {
+    return CatalogAffiliations.load(this.config.root).entries()
+  }
+
+  revision(): number {
+    return this.ensureGeneration
+  }
+
   async registerActiveModel(path: string, displayName?: string): Promise<InventoryEntryId> {
     const canonical = realpathSync(path)
     if (!statSync(canonical).isFile()) {
@@ -333,11 +369,11 @@ export class ManagedModelStore {
     const metadata = statSync(canonical)
     const component: ModelComponent = {
       path: basename(canonical),
-      role: "Weights",
-      size_bytes: metadata.size,
-      content: ContentIdentity.FileIdentity(fileIdentity(canonical, metadata)),
-      shard_index: undefined,
-      relationship: undefined,
+      role: "weights",
+      size_bytes: BigInt(metadata.size),
+      content: contentIdentity.fileIdentity(fileIdentity(canonical, metadata)),
+      shard_index: Option.none(),
+      relationship: Option.none(),
     }
     const content = contentId([component])
     const id = inventoryEntryId("active-file", canonical, content)
@@ -347,19 +383,19 @@ export class ManagedModelStore {
       content,
       timestamp,
       timestamp,
-      { _tag: "Local", declared_by: "active_process" },
+      { type: "local", declared_by: "active_process" },
       {
-        _tag: "File",
+        type: "file",
         path: canonical,
         component,
-        integrity: { _tag: "Unverified", reason: "active_process" },
+        integrity: { type: "unverified", reason: "active_process" },
       },
       canonical,
       false,
       this.cache,
     )
     if (displayName !== undefined) {
-      model.name = displayName
+      Object.assign(model, { name: displayName })
     }
     await this.completeAndPublishModel(model)
     return id
@@ -399,9 +435,9 @@ export class ManagedModelStore {
     const records = new Map<InventoryEntryId, InstalledPackageRecord>()
     for (const model of models.values()) {
       if (
-        model.availability._tag !== "Available" &&
-        model.availability._tag !== "InvalidArtifact" &&
-        model.availability._tag !== "IncompatibleArtifact"
+        model.availability.type !== "available" &&
+        model.availability.type !== "invalid_artifact" &&
+        model.availability.type !== "incompatible_artifact"
       ) {
         continue
       }
@@ -414,7 +450,7 @@ export class ManagedModelStore {
         path: installedPath(model, resolved),
         origin: installedOrigin(model),
         validation: validated.validation,
-        catalog_attribution: notCatalogTarget(),
+        catalogAttribution: notCatalogTarget(),
         package: validated.package,
       }
       records.set(model.id, { installed, model })
@@ -430,12 +466,22 @@ export class ManagedModelStore {
       throw InventoryError.NotFound({ id: packageId })
     }
     matches.sort((left, right) => {
-      const leftScore = left.installed.origin === "hugging_face_cache" ? 1 : 0
-      const rightScore = right.installed.origin === "hugging_face_cache" ? 1 : 0
+      const leftScore = left.installed.origin === "HuggingFaceCache" ? 1 : 0
+      const rightScore = right.installed.origin === "HuggingFaceCache" ? 1 : 0
       return leftScore - rightScore || left.model.id.localeCompare(right.model.id)
     })
     const record = matches[0]
     return [record.installed.package, record.model]
+  }
+
+  async startTargetDownloads(
+    packages: readonly ModelPackage[],
+  ): Promise<AsyncIterable<import("@magnitudedev/icn-contracts").ModelDownloadEvent>[]> {
+    return startTargetDownloadsImpl(this, this.downloadState, packages)
+  }
+
+  async cancelPackageDownload(package_: ModelPackage): Promise<void> {
+    return cancelPackageDownloadImpl(this, this.downloadState, package_)
   }
 
   /** Test hook: direct access to in-memory inventory models. */
@@ -453,23 +499,23 @@ export class ManagedModelStore {
 const notCatalogTarget = (): InstalledCatalogAttribution => ({ _tag: "NotCatalogTarget" })
 
 const installedOrigin = (model: InventoryModel): ModelPackageInstallationOrigin => {
-  switch (model.location._tag) {
-    case "HuggingFaceCache":
-      return "hugging_face_cache"
+  switch (model.location.type) {
+    case "hugging_face_cache":
+      return "HuggingFaceCache"
     default:
-      return "magnitude"
+      return "Magnitude"
   }
 }
 
 const installedPath = (model: InventoryModel, resolved: { components: readonly { path: string }[] }): string => {
-  switch (model.location._tag) {
-    case "Directory":
+  switch (model.location.type) {
+    case "directory":
       return model.location.root
-    case "File":
+    case "file":
       return model.location.path
-    case "HuggingFaceCache":
+    case "hugging_face_cache":
       return model.location.cache_root
-    case "MagnitudeCache":
+    case "magnitude_cache":
       return resolved.components[0]?.path !== undefined
         ? dirname(resolved.components[0].path)
         : ""
@@ -499,15 +545,15 @@ export const buildModel = (
     const inspected: CachedModelMetadata = {
       name: inspection.name ?? basename(primary, ".gguf") ?? "local model",
       properties: {
-        _tag: "Inspected",
-        architecture: inspection.architecture,
-        quantization: inspection.quantization,
-        quantization_name: inspection.quantization_name,
-        parameter_count: inspection.parameter_count,
-        active_parameter_count: inspection.active_parameter_count,
-        training_context_length: inspection.training_context_length,
-        nextn_predict_layers: inspection.nextn_predict_layers,
-        tokenizer: inspection.tokenizer,
+        type: "inspected",
+        architecture: Option.fromNullable(inspection.architecture),
+        quantization: Option.fromNullable(inspection.quantization),
+        quantization_name: Option.fromNullable(inspection.quantization_name),
+        parameter_count: Option.fromNullable(inspection.parameter_count !== null ? BigInt(inspection.parameter_count) : null),
+        active_parameter_count: Option.fromNullable(inspection.active_parameter_count !== null ? BigInt(inspection.active_parameter_count) : null),
+        training_context_length: Option.fromNullable(inspection.training_context_length),
+        nextn_predict_layers: Option.fromNullable(inspection.nextn_predict_layers),
+        tokenizer: Option.fromNullable(inspection.tokenizer),
         modalities: inspection.modalities,
         base_models: inspection.base_models,
         evidence_fingerprint: evidence,
@@ -553,15 +599,15 @@ const availableModel = (
   return {
     id,
     content_id: contentIdValue,
-    created,
+    created: BigInt(created),
     name: inspected.name,
     supported_parameters: inspected.supported_parameters,
-    availability: { _tag: "Available", ready_at: readyAt },
+    availability: { type: "available", ready_at: BigInt(readyAt) },
     source,
     location,
     properties: inspected.properties,
     operations,
-    updated_at: readyAt,
+    updated_at: BigInt(readyAt),
   }
 }
 
@@ -579,21 +625,21 @@ const unavailableModel = (
   incompatible: boolean,
 ): InventoryModel => {
   const availability: ModelAvailability = incompatible
-    ? { _tag: "IncompatibleArtifact", detected_at: detectedAt, code, message }
-    : { _tag: "InvalidArtifact", detected_at: detectedAt, code, message }
+    ? { type: "incompatible_artifact", detected_at: BigInt(detectedAt), code, message }
+    : { type: "invalid_artifact", detected_at: BigInt(detectedAt), code, message }
   const operations: ModelOperation[] = deletable ? ["delete"] : []
   return {
     id,
     content_id: contentIdValue,
-    created,
+    created: BigInt(created),
     name: basename(primary) || "local model",
     supported_parameters: [],
     availability,
     source,
     location,
-    properties: { _tag: "Unavailable", reason: message },
+    properties: { type: "unavailable", reason: message },
     operations,
-    updated_at: detectedAt,
+    updated_at: BigInt(detectedAt),
   }
 }
 
@@ -638,7 +684,7 @@ export const scan = (
       // keep
     }
     const distinctPath =
-      candidate.candidate.location._tag === "MagnitudeCache"
+      candidate.candidate.location.type === "magnitude_cache"
         ? (seenPaths.has(canonical) ? false : (seenPaths.add(canonical), true))
         : seenPaths.add(canonical)
     if (!distinctPath) continue
@@ -677,7 +723,7 @@ const loadEvidence = (cache: ModelCache): Map<InventoryEntryId, CacheEvidence> =
   const recovered = recoverMap<CacheEvidence>(inventory.evidence, MAX_SCAN_ENTRIES)
   const evidence = new Map<InventoryEntryId, CacheEvidence>()
   for (const [key, value] of recovered) {
-    evidence.set(InventoryEntryIdBrand.make(key), value)
+    evidence.set(makeInventoryEntryId(key), value)
   }
   return evidence
 }
@@ -721,17 +767,17 @@ const scanManaged = (config: InventoryConfig, output: DiscoveryCandidate[]): voi
               created: timestamp,
               ready_at: timestamp,
               source: {
-                _tag: "HuggingFace",
+                type: "hugging_face",
                 repository: package_.source.repository,
                 requested_revision: package_.source.revision,
                 commit: snapshotEntry,
-                metadata: null,
+                metadata: Option.none(),
               },
               location: {
-                _tag: "MagnitudeCache",
-                total_bytes: components.reduce((sum, item) => sum + item.size_bytes, 0),
+                type: "magnitude_cache",
+                total_bytes: components.reduce((sum, item) => sum + item.size_bytes, 0n),
                 components,
-                integrity: { _tag: "Verified", method: "catalog_content_identity" },
+                integrity: { type: "verified", method: "catalog_content_identity" },
               },
               primary,
               deletable: true,
@@ -748,8 +794,8 @@ export const catalogPackages = (
 ): Array<[ModelPackage, "target" | "dependency"]> => {
   const bundle = model.configuration.bundle
   const target: [ModelPackage, "target" | "dependency"] = [catalogTarget(model), "target"]
-  if (bundle._tag === "SpeculativeDecoding" && bundle.draft_source._tag === "Separate") {
-    return [target, [bundle.draft_source.draft, "dependency"]]
+  if (bundle._tag === "SpeculativeDecoding" && bundle.draftSource._tag === "Separate") {
+    return [target, [bundle.draftSource.draft, "dependency"]]
   }
   return [target]
 }
@@ -789,20 +835,20 @@ const scanHfCache = (cache: string, output: DiscoveryCandidate[]): void => {
             created,
             ready_at: created,
             source: {
-              _tag: "HuggingFace",
+              type: "hugging_face",
               repository,
               requested_revision: currentCommit === snapshotEntry ? "main" : snapshotEntry,
               commit: snapshotEntry,
-              metadata: null,
+              metadata: Option.none(),
             },
             location: {
-              _tag: "HuggingFaceCache",
+              type: "hugging_face_cache",
               cache_root: snapshot,
               repository,
               commit: snapshotEntry,
-              total_bytes: components.reduce((sum, item) => sum + item.size_bytes, 0),
+              total_bytes: components.reduce((sum, item) => sum + item.size_bytes, 0n),
               components,
-              integrity: { _tag: "Unverified", reason: "external_cache" },
+              integrity: { type: "unverified", reason: "external_cache" },
             },
             primary,
             deletable: false,
@@ -886,11 +932,11 @@ const componentsForGroup = (snapshot: string, group: DiscoveredGroup): ModelComp
     const shard = splitShardName(path)
     components.push({
       path: relative(snapshot, path),
-      role: shard !== undefined ? "Shard" : "Weights",
-      size_bytes: metadata.size,
+      role: shard !== undefined ? "shard" : "weights",
+      size_bytes: BigInt(metadata.size),
       content: contentIdentityForFile(path, metadata),
-      shard_index: shard?.index,
-      relationship: undefined,
+      shard_index: shard?.index !== undefined ? Option.some(shard.index) : Option.none(),
+      relationship: Option.none(),
     })
   }
   return components
@@ -901,41 +947,40 @@ const componentsForCatalogPackage = (package_: ModelPackage): ModelComponent[] =
   return package_.files.map((file) => {
     const shard = package_.relationships.find(
       (relationship): relationship is Extract<ModelFileRelationship, { _tag: "Shard" }> =>
-        relationship._tag === "Shard" && relationship.file_id === file.id,
+        relationship._tag === "Shard" && relationship.fileId === file.id,
     )
     const relationship = package_.relationships.find((relationship) => {
       switch (relationship._tag) {
         case "ProjectorFor":
-          return relationship.projector_file_id === file.id
+          return relationship.projectorFileId === file.id
         case "MtpFor":
-          return relationship.mtp_file_id === file.id
+          return relationship.mtpFileId === file.id
         case "DraftFor":
-          return relationship.draft_file_id === file.id
+          return relationship.draftFileId === file.id
         default:
           return false
       }
     })
-    const mappedRelationship = relationship === undefined
-      ? undefined
-      : mapRelationship(relationship, paths, file.path)
+    const mappedRelationship =
+      relationship === undefined ? Option.none() : mapRelationship(relationship, paths, file.path)
     const role: ComponentRole =
       file.role === "weights"
         ? shard !== undefined
-          ? "Shard"
-          : "Weights"
+          ? "shard"
+          : "weights"
         : file.role === "projector"
-          ? "Projector"
+          ? "projector"
           : file.role === "draft"
-            ? "Draft"
+            ? "draft"
             : file.role === "mtp"
-              ? "Mtp"
-              : "Auxiliary"
+              ? "mtp"
+              : "auxiliary"
     return {
       path: file.path,
       role,
-      size_bytes: file.size_bytes,
-      content: ContentIdentity.Sha256(file.sha256),
-      shard_index: shard?.index,
+      size_bytes: BigInt(file.sizeBytes),
+      content: contentIdentity.sha256(file.sha256),
+      shard_index: shard?.index !== undefined ? Option.some(shard.index) : Option.none(),
       relationship: mappedRelationship,
     }
   })
@@ -945,25 +990,25 @@ const mapRelationship = (
   relationship: ModelFileRelationship,
   paths: Map<ModelPackage["files"][number]["id"], string>,
   filePath: string,
-): ModelComponent["relationship"] => {
+): Option.Option<ModelComponent["relationship"] extends Option.Option<infer A> ? A : never> => {
   switch (relationship._tag) {
     case "ProjectorFor":
-      return {
-        _tag: "ProjectorFor",
+      return Option.some({
+        type: "projector_for",
         projector: filePath,
-        model: paths.get(relationship.weights_file_id) ?? "",
-      }
+        model: paths.get(relationship.weightsFileId) ?? "",
+      })
     case "MtpFor":
-      return { _tag: "MtpFor", mtp: filePath, model: paths.get(relationship.weights_file_id) ?? "" }
+      return Option.some({ type: "mtp_for", mtp: filePath, model: paths.get(relationship.weightsFileId) ?? "" })
     case "DraftFor":
-      return {
-        _tag: "DraftFor",
+      return Option.some({
+        type: "draft_for",
         draft: filePath,
-        model: paths.get(relationship.weights_file_id) ?? "",
+        model: paths.get(relationship.weightsFileId) ?? "",
         method: relationship.method,
-      }
+      })
     default:
-      return undefined
+      return Option.none()
   }
 }
 
@@ -988,13 +1033,13 @@ const catalogComponentsPresent = (
     }
     if (!canonicalBlob.startsWith(canonicalBlobs)) return false
     const blobMetadata = statSync(blob)
-    if (!blobMetadata.isFile() || blobMetadata.size !== component.size_bytes) return false
+    if (!blobMetadata.isFile() || BigInt(blobMetadata.size) !== component.size_bytes) return false
     const destination = join(snapshot, component.path)
     try {
       const destinationMetadata = statSync(destination)
       return (
         destinationMetadata.isFile() &&
-        destinationMetadata.size === component.size_bytes &&
+        BigInt(destinationMetadata.size) === component.size_bytes &&
         realpathSync(destination) === canonicalBlob
       )
     } catch {
@@ -1025,17 +1070,17 @@ const appendDiscoveredGroups = (
         created: timestamp,
         ready_at: timestamp,
         source: {
-          _tag: "HuggingFace",
+          type: "hugging_face",
           repository,
           requested_revision: commit,
           commit,
-          metadata: null,
+          metadata: Option.none(),
         },
         location: {
-          _tag: "MagnitudeCache",
-          total_bytes: components.reduce((sum, item) => sum + item.size_bytes, 0),
+          type: "magnitude_cache",
+          total_bytes: components.reduce((sum, item) => sum + item.size_bytes, 0n),
           components,
-          integrity: { _tag: "Unverified", reason: "filesystem_discovery" },
+          integrity: { type: "unverified", reason: "filesystem_discovery" },
         },
         primary,
         deletable: true,
@@ -1046,8 +1091,8 @@ const appendDiscoveredGroups = (
 
 const primaryPath = (snapshot: string, components: ModelComponent[]): string | undefined => {
   const weights = components
-    .filter((component) => component.role === "Weights" || component.role === "Shard")
-    .sort((left, right) => (left.shard_index ?? 0) - (right.shard_index ?? 0))
+    .filter((component) => component.role === "weights" || component.role === "shard")
+    .sort((left, right) => (Option.getOrElse(left.shard_index, () => 0)) - (Option.getOrElse(right.shard_index, () => 0)))
   if (weights.length === 0) return undefined
   return join(snapshot, weights[0].path)
 }
@@ -1098,13 +1143,13 @@ const reuseMetadata = (
     return undefined
   }
   const terminal =
-    (cached.availability._tag === "Available" && cached.properties._tag === "Inspected") ||
-    ((cached.availability._tag === "InvalidArtifact" ||
-      cached.availability._tag === "IncompatibleArtifact") &&
-      cached.properties._tag === "Unavailable")
+    (cached.availability.type === "available" && cached.properties.type === "inspected") ||
+    ((cached.availability.type === "invalid_artifact" ||
+      cached.availability.type === "incompatible_artifact") &&
+      cached.properties.type === "unavailable")
   if (!terminal) return undefined
   const operations: ModelOperation[] =
-    cached.availability._tag === "Available"
+    cached.availability.type === "available"
       ? candidate.deletable
         ? ["load", "unload", "delete"]
         : ["load", "unload"]
@@ -1136,7 +1181,7 @@ const loadInventoryIndex = (
   const models = new Map<InventoryEntryId, InventoryModel>()
   for (const [rawId, model] of rawModels) {
     try {
-      const id = InventoryEntryIdBrand.parse(rawId)
+      const id = parseEntryId(rawId)
       if (model.id === id) {
         models.set(id, model)
       }
@@ -1147,7 +1192,7 @@ const loadInventoryIndex = (
   const evidence = new Map<InventoryEntryId, CacheEvidence>()
   for (const [rawId, entry] of rawEvidence) {
     try {
-      const id = InventoryEntryIdBrand.parse(rawId)
+      const id = parseEntryId(rawId)
       if (models.has(id)) {
         evidence.set(id, entry)
       }
@@ -1191,12 +1236,12 @@ const validateConfig = (config: InventoryConfig): void => {
 }
 
 const isCacheableModel = (model: InventoryModel): boolean => {
-  switch (model.availability._tag) {
-    case "Available":
-      return model.properties._tag === "Inspected"
-    case "InvalidArtifact":
-    case "IncompatibleArtifact":
-      return model.properties._tag === "Unavailable"
+  switch (model.availability.type) {
+    case "available":
+      return model.properties.type === "inspected"
+    case "invalid_artifact":
+    case "incompatible_artifact":
+      return model.properties.type === "unavailable"
     default:
       return false
   }
@@ -1204,11 +1249,11 @@ const isCacheableModel = (model: InventoryModel): boolean => {
 
 const modelPrimaryPath = (root: string, model: InventoryModel): string | undefined => {
   const component = modelLocationComponents(model.location).find(
-    (item) => item.role === "Weights" || item.role === "Shard",
+    (item) => item.role === "weights" || item.role === "shard",
   )
   if (component === undefined) return undefined
   let path: string
-  if (model.location._tag === "MagnitudeCache" && model.source._tag === "HuggingFace") {
+  if (model.location.type === "magnitude_cache" && model.source.type === "hugging_face") {
     path = join(
       root,
       "hub",
@@ -1217,11 +1262,11 @@ const modelPrimaryPath = (root: string, model: InventoryModel): string | undefin
       model.source.commit,
       component.path,
     )
-  } else if (model.location._tag === "HuggingFaceCache") {
+  } else if (model.location.type === "hugging_face_cache") {
     path = join(model.location.cache_root, component.path)
-  } else if (model.location._tag === "Directory") {
+  } else if (model.location.type === "directory") {
     path = join(model.location.root, component.path)
-  } else if (model.location._tag === "File") {
+  } else if (model.location.type === "file") {
     path = model.location.path
   } else {
     return undefined
@@ -1241,16 +1286,16 @@ const artifactObservationKey = (
   source: ModelSource,
   location: InventoryModel["location"],
 ): string => {
-  if (source._tag === "HuggingFace" && location._tag === "MagnitudeCache") {
+  if (source.type === "hugging_face" && location.type === "magnitude_cache") {
     return `magnitude-cache:${source.repository}:${source.commit}:${contentId([...location.components]).toString()}`
   }
-  if (location._tag === "HuggingFaceCache") {
+  if (location.type === "hugging_face_cache") {
     return `hugging-face-cache:${location.cache_root}:${contentId([...location.components]).toString()}`
   }
-  if (location._tag === "Directory") {
+  if (location.type === "directory") {
     return `directory:${location.root}`
   }
-  if (location._tag === "File") {
+  if (location.type === "file") {
     return `file:${location.path}`
   }
   return `unknown:${root}`
@@ -1261,7 +1306,7 @@ const modelMetadataEvidence = (contentIdValue: ContentId, primaryName: string): 
 
 const modelMetadataEvidenceForModel = (model: InventoryModel): string => {
   const primary = modelLocationComponents(model.location).find(
-    (component) => component.role === "Weights" || component.role === "Shard",
+    (component) => component.role === "weights" || component.role === "shard",
   )
   const primaryName = primary !== undefined ? basename(primary.path) : "local model"
   return modelMetadataEvidence(model.content_id, primaryName)
@@ -1274,7 +1319,7 @@ const fileIdentity = (path: string, metadata: { mtimeMs: number; size: number })
 }
 
 const contentIdentityForFile = (path: string, metadata: { mtimeMs: number; size: number }): ContentIdentity =>
-  ContentIdentity.FileIdentity(fileIdentity(path, metadata))
+  contentIdentity.fileIdentity(fileIdentity(path, metadata))
 
 const modifiedSeconds = (path: string): number | undefined => {
   try {

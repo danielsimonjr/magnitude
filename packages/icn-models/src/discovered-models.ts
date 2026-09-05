@@ -1,28 +1,22 @@
+import { Option } from "effect"
 import {
-  CatalogBaseId,
-  CatalogVariantId,
-  HuggingFaceArtifactSelector,
-  HuggingFaceRepositoryId,
+  contentIdentity,
+  huggingFaceArtifactSelector,
+  huggingFaceRepositoryId,
+  makeContentId,
+  makeInventoryEntryId,
+  modelFileId,
+  modelPackageId,
   ModelId,
-  type ContentId,
+  ModelIdError,
   type InstalledCatalogAttribution,
   type InstalledModelPackage,
   type InventoryEntryId,
   type InventoryModel,
   type ModelFile,
-  type ModelFileId,
   type ModelPackage,
-  type ModelPackageId,
   type ModelPackageProperties,
-  type ModelPackageSource,
-  type PackageValidation,
-  ComponentRole,
-  ContentIdentity,
-  Integrity,
-  ModelAvailability,
-  ModelLocation,
-  ModelSource,
-} from "./_contracts-shim"
+} from "@magnitudedev/icn-contracts"
 import { type InstalledPackageSnapshot } from "./inventory"
 import { effectiveModel } from "./model-projection"
 
@@ -42,12 +36,12 @@ const candidatePreference = (
 export const selectedDiscoveredPackages = (
   installed: InstalledPackageSnapshot,
 ): Map<ModelId, InstalledModelPackage> => {
-  const selected = new Map<ModelId, DiscoveryCandidate>()
+  const selected = new Map<string, DiscoveryCandidate>()
   for (const record of installed.records.values()) {
-    if (record.installed.origin !== "hugging_face_cache") {
+    if (record.installed.origin !== "HuggingFaceCache") {
       continue
     }
-    if (record.model.source._tag !== "HuggingFace") {
+    if (record.model.source.type !== "hugging_face") {
       continue
     }
     const selector = record.installed.package.files
@@ -57,12 +51,9 @@ export const selectedDiscoveredPackages = (
     if (selector === undefined) {
       continue
     }
-    let artifactSelector: ReturnType<typeof HuggingFaceArtifactSelector.new>
-    let repositoryId: ReturnType<typeof HuggingFaceRepositoryId.new>
-    try {
-      artifactSelector = HuggingFaceArtifactSelector.new(selector)
-      repositoryId = HuggingFaceRepositoryId.new(record.model.source.repository)
-    } catch {
+    const artifactSelector = huggingFaceArtifactSelector(selector)
+    const repositoryId = huggingFaceRepositoryId(record.model.source.repository)
+    if (artifactSelector instanceof ModelIdError || repositoryId instanceof ModelIdError) {
       continue
     }
     const id = ModelId.huggingFace(repositoryId, artifactSelector)
@@ -70,14 +61,16 @@ export const selectedDiscoveredPackages = (
       package: record.installed,
       commit: record.model.source.commit,
       current: record.model.source.requested_revision === "main",
-      modified_at: record.model.updated_at,
+      modified_at: Number(record.model.updated_at),
     }
-    const existing = selected.get(id)
+    const existing = selected.get(id.value)
     if (existing === undefined || comparePreference(candidate, existing) > 0) {
-      selected.set(id, candidate)
+      selected.set(id.value, candidate)
     }
   }
-  return new Map([...selected.entries()].map(([id, candidate]) => [id, candidate.package]))
+  return new Map(
+    [...selected.entries()].map(([id, candidate]) => [ModelId.fromString(id) as ModelId, candidate.package]),
+  )
 }
 
 const comparePreference = (left: DiscoveryCandidate, right: DiscoveryCandidate): number => {
@@ -93,15 +86,15 @@ const comparePreference = (left: DiscoveryCandidate, right: DiscoveryCandidate):
 }
 
 export const discoveredProfile = (installed: InstalledModelPackage) => ({
-  context_length: Math.min(
-    installed.package.properties.maximum_context_length ?? DEFAULT_EXTERNAL_CONTEXT,
+  contextLength: Math.min(
+    Option.getOrElse(installed.package.properties.maximumContextLength, () => DEFAULT_EXTERNAL_CONTEXT),
     DEFAULT_EXTERNAL_CONTEXT,
   ),
 })
 
 export const discoveredModels = (installed: InstalledPackageSnapshot) =>
   [...selectedDiscoveredPackages(installed).entries()].flatMap(([id, selected]) => {
-    const catalogAttribution = matchCatalogAttribution(selected.catalog_attribution)
+    const catalogAttribution = matchCatalogAttribution(selected.catalogAttribution)
     if (catalogAttribution === null) {
       return []
     }
@@ -116,7 +109,7 @@ export const discoveredModels = (installed: InstalledPackageSnapshot) =>
                 _tag: "Ready" as const,
                 installation,
                 model: effective.model,
-                catalog_attribution: catalogAttribution,
+                catalogAttribution,
               }
             : {
                 _tag: "Unavailable" as const,
@@ -150,69 +143,71 @@ export const discoveryRecord = (
   catalogAttribution: InstalledCatalogAttribution,
 ): [InventoryEntryId, { installed: InstalledModelPackage; model: InventoryModel }] => {
   const modelFile: ModelFile = {
-    id: `file-${packageId}` as ModelFileId,
+    id: modelFileId(`file-${packageId}`),
     path: selector,
     role: "weights",
-    size_bytes: 10,
-    tensor_storage_bytes: 10,
+    sizeBytes: 10,
+    tensorStorageBytes: Option.some(10),
     sha256: "a".repeat(64),
   }
   const package_: ModelPackage = {
-    id: packageId as ModelPackageId,
+    id: modelPackageId(packageId),
     source: { _tag: "HuggingFace", repository, revision: commit },
     files: [modelFile],
     relationships: [],
     properties: {
       format: "gguf",
       quantization: "Q4_K_M",
-      quantization_name: "4-bit",
+      quantizationName: "4-bit",
       architecture: "test",
-      maximum_context_length: 32_768,
-      intrinsic_model_id: null,
-      intrinsic_quality_id: null,
+      maximumContextLength: Option.some(32_768),
+      intrinsicModelId: Option.none(),
+      intrinsicQualityId: Option.none(),
     } satisfies ModelPackageProperties,
   }
   const installed: InstalledModelPackage = {
     path: `/cache/${occurrence}/${selector}`,
     package: package_,
-    origin: "hugging_face_cache",
+    origin: "HuggingFaceCache",
     validation: { _tag: "Valid" },
-    catalog_attribution: catalogAttribution,
+    catalogAttribution,
   }
-  const id = occurrence as InventoryEntryId
+  const id = makeInventoryEntryId(occurrence)
   const model: InventoryModel = {
     id,
-    content_id: `content-${occurrence}` as ContentId,
-    created: 1,
+    content_id: makeContentId(`content-${occurrence}`),
+    created: 1n,
     name: selector,
     supported_parameters: [],
-    availability: { _tag: "Available", ready_at: 1 },
+    availability: { type: "available", ready_at: 1n },
     source: {
-      _tag: "HuggingFace",
+      type: "hugging_face",
       repository,
       requested_revision: requestedRevision,
       commit,
-      metadata: null,
-    } satisfies ModelSource,
+      metadata: Option.none(),
+    },
     location: {
-      _tag: "HuggingFaceCache",
+      type: "hugging_face_cache",
       cache_root: `/cache/${occurrence}`,
       repository,
       commit,
       components: [
         {
           path: selector,
-          role: "Weights" satisfies ComponentRole,
-          size_bytes: 10,
-          content: ContentIdentity.Sha256("a".repeat(64)),
+          role: "weights",
+          size_bytes: 10n,
+          content: contentIdentity.sha256("a".repeat(64)),
+          shard_index: Option.none(),
+          relationship: Option.none(),
         },
       ],
-      total_bytes: 10,
-      integrity: { _tag: "Unverified", reason: "test" } satisfies Integrity,
-    } satisfies ModelLocation,
-    properties: { _tag: "Pending" },
+      total_bytes: 10n,
+      integrity: { type: "unverified", reason: "test" },
+    },
+    properties: { type: "pending" },
     operations: [],
-    updated_at: 1,
+    updated_at: 1n,
   }
   return [id, { installed, model }]
 }
@@ -227,8 +222,8 @@ export class ManagedDiscoveredModels {
 
   snapshot() {
     return {
-      revision: this.resolver.revision(),
-      reconciliation_complete: true,
+      revision: BigInt(this.resolver.revision()),
+      reconciliationComplete: true,
       models: discoveredModels(this.resolver.snapshot()),
     }
   }

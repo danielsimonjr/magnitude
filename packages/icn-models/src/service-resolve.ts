@@ -1,15 +1,15 @@
+import { Option } from "effect"
 import { realpathSync } from "node:fs"
 import { basename, dirname, join } from "node:path"
 import {
-  ComponentRole,
   InventoryError,
   modelLocationComponents,
   type InventoryModel,
   type ResolvedComponent,
-} from "./_contracts-shim"
+} from "@magnitudedev/icn-contracts"
 import { hfRepoDir } from "./paths"
 
-const invalidSplitLayout = (role: ComponentRole): InventoryError =>
+const invalidSplitLayout = (role: ResolvedComponent["role"]): InventoryError =>
   InventoryError.ModelOperation({
     code: "invalid_split_layout",
     message: `the ${role} gguf shard layout is invalid`,
@@ -19,17 +19,17 @@ const invalidSplitLayout = (role: ComponentRole): InventoryError =>
 export const resolveComponents = (root: string, model: InventoryModel): ResolvedComponent[] => {
   let base: string
   let containment: string
-  if (model.location._tag === "MagnitudeCache" && model.source._tag === "HuggingFace") {
+  if (model.location.type === "magnitude_cache" && model.source.type === "hugging_face") {
     const repositoryRoot = join(root, "hub", hfRepoDir(model.source.repository))
     base = join(repositoryRoot, "snapshots", model.source.commit)
     containment = repositoryRoot
-  } else if (model.location._tag === "HuggingFaceCache") {
+  } else if (model.location.type === "hugging_face_cache") {
     base = model.location.cache_root
     containment = hfRepoRoot(model.location.cache_root)
-  } else if (model.location._tag === "Directory") {
+  } else if (model.location.type === "directory") {
     base = model.location.root
     containment = model.location.root
-  } else if (model.location._tag === "File") {
+  } else if (model.location.type === "file") {
     base = dirname(model.location.path)
     containment = base
   } else {
@@ -40,7 +40,7 @@ export const resolveComponents = (root: string, model: InventoryModel): Resolved
   const canonicalContainment = realpathSync(containment)
   const resolved = modelLocationComponents(model.location).map((component) => {
     const path =
-      model.location._tag === "File" ? model.location.path : join(base, component.path)
+      model.location.type === "file" ? model.location.path : join(base, component.path)
     const canonical = realpathSync(path)
     if (!canonical.startsWith(canonicalContainment)) {
       throw InventoryError.DeletionUnsafe({
@@ -50,8 +50,8 @@ export const resolveComponents = (root: string, model: InventoryModel): Resolved
     return {
       path,
       role: component.role,
-      shard_index: component.shard_index,
-      relationship: component.relationship,
+      shard_index: Option.getOrUndefined(component.shard_index),
+      relationship: Option.getOrUndefined(component.relationship),
     }
   })
   validateShardLayout(resolved)
@@ -59,7 +59,7 @@ export const resolveComponents = (root: string, model: InventoryModel): Resolved
 }
 
 const validateShardLayout = (components: readonly ResolvedComponent[]): void => {
-  const groups: Array<[ComponentRole, string]> = []
+  const groups: Array<[ResolvedComponent["role"], string]> = []
   for (const component of components) {
     if (component.shard_index === undefined) continue
     const directory = dirname(component.path)

@@ -141,16 +141,17 @@ export const buildSamplerConfig = (
   }
 }
 
+import { getSamplingContext } from "./context-binding.js"
+import { sampleTokenFromContext } from "./native.js"
+
 /**
- * Hardware-gated: sample one token from logits via `@magnitudedev/icn-native`.
+ * Sample one token from logits via `@magnitudedev/icn-native`.
  *
- * The executor calls this on the dedicated worker thread that owns FFI.
+ * The executor calls this on the dedicated worker thread that owns FFI after
+ * `bindSamplingContext`. Only greedy decoding is wired; temperature, top-p,
+ * grammars, and reasoning budgets require native sampler-chain FFI.
  */
 export const sampleToken = async (
-  _config: CommonSamplerConfig,
-  _batchIndex: number
-): Promise<number> => {
-  throw new Error(
-    "sampleToken requires native integration — call through the inference worker FFI owner"
-  )
-}
+  config: CommonSamplerConfig,
+  batchIndex: number
+): Promise<number> => sampleTokenFromContext(getSamplingContext(), config, batchIndex)

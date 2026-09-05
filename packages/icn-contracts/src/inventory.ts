@@ -61,6 +61,85 @@ export const parseContentId = (value: string): ContentId | InventoryError => {
   return error ?? (value as ContentId)
 }
 
+export const makeInventoryEntryId = (value: string): InventoryEntryId => value as InventoryEntryId
+export const makeContentId = (value: string): ContentId => value as ContentId
+
+export const inventoryError = {
+  invalidId: (value: string): InventoryError => ({ _tag: "InvalidId", value }),
+  invalidRequest: (message: string): InventoryError => ({ _tag: "InvalidRequest", message }),
+  notFound: (message: string): InventoryError => ({ _tag: "NotFound", message }),
+  notReady: (message: string): InventoryError => ({ _tag: "NotReady", message }),
+  busy: (message: string): InventoryError => ({ _tag: "Busy", message }),
+  loaded: (message: string): InventoryError => ({ _tag: "Loaded", message }),
+  deletionUnsafe: (message: string): InventoryError => ({ _tag: "DeletionUnsafe", message }),
+  unsupported: (message: string): InventoryError => ({ _tag: "Unsupported", message }),
+  io: (message: string): InventoryError => ({ _tag: "Io", message }),
+  upstream: (message: string): InventoryError => ({ _tag: "Upstream", message }),
+  integrity: (message: string): InventoryError => ({ _tag: "Integrity", message }),
+  concurrentMutation: (message: string): InventoryError => ({ _tag: "ConcurrentMutation", message }),
+  modelOperation: (code: string, message: string, retryable: boolean): InventoryError => ({
+    _tag: "ModelOperation",
+    code,
+    message,
+    retryable,
+  }),
+  internal: (message: string): InventoryError => ({ _tag: "Internal", message }),
+}
+
+export const InventoryError = {
+  InvalidRequest: (input: { message: string }): InventoryError =>
+    inventoryError.invalidRequest(input.message),
+  NotFound: (input: { id: string }): InventoryError => inventoryError.notFound(input.id),
+  NotReady: (input: { id: string }): InventoryError => inventoryError.notReady(input.id),
+  Busy: (input: { id: string }): InventoryError => inventoryError.busy(input.id),
+  Loaded: (input: { id: string }): InventoryError => inventoryError.loaded(input.id),
+  DeletionUnsafe: (input: { message: string }): InventoryError =>
+    inventoryError.deletionUnsafe(input.message),
+  Unsupported: (input: { message: string }): InventoryError =>
+    inventoryError.unsupported(input.message),
+  Io: (input: { message: string }): InventoryError => inventoryError.io(input.message),
+  Upstream: (input: { message: string }): InventoryError => inventoryError.upstream(input.message),
+  Integrity: (input: { message: string }): InventoryError => inventoryError.integrity(input.message),
+  ConcurrentMutation: (input: { message: string }): InventoryError =>
+    inventoryError.concurrentMutation(input.message),
+  ModelOperation: (input: { code: string; message: string; retryable: boolean }): InventoryError =>
+    inventoryError.modelOperation(input.code, input.message, input.retryable),
+  Internal: (input: { message: string }): InventoryError => inventoryError.internal(input.message),
+}
+
+export const inventoryErrorMessage = (error: InventoryError): string => {
+  switch (error._tag) {
+    case "InvalidId":
+      return `invalid model id: ${error.value}`
+    case "InvalidRequest":
+      return `invalid model request: ${error.message}`
+    case "NotFound":
+      return `model not found: ${error.message}`
+    case "NotReady":
+      return `model is not ready: ${error.message}`
+    case "Busy":
+      return `model is busy: ${error.message}`
+    case "Loaded":
+      return `model is loaded: ${error.message}`
+    case "DeletionUnsafe":
+      return `deletion is unsafe: ${error.message}`
+    case "Unsupported":
+      return `model source does not support this operation: ${error.message}`
+    case "Io":
+      return `inventory I/O failed: ${error.message}`
+    case "Upstream":
+      return `upstream model service failed: ${error.message}`
+    case "Integrity":
+      return `model integrity check failed: ${error.message}`
+    case "ConcurrentMutation":
+      return `model artifacts changed during inspection: ${error.message}`
+    case "ModelOperation":
+      return error.message
+    case "Internal":
+      return `internal inventory failure: ${error.message}`
+  }
+}
+
 export const ComponentRole = Schema.Literal(
   "weights",
   "shard",
@@ -97,6 +176,19 @@ export const ContentIdentity = Schema.Union(
   ContentIdentityUnknown
 )
 export type ContentIdentity = typeof ContentIdentity.Type
+
+export const contentIdentity = {
+  sha256: (value: string): ContentIdentity => ({ type: "sha256", value }),
+  gitOid: (value: string): ContentIdentity => ({ type: "git_oid", value }),
+  xet: (value: string): ContentIdentity => ({ type: "xet", value }),
+  fileIdentity: (value: string): ContentIdentity => ({ type: "file_identity", value }),
+  unknown: (): ContentIdentity => ({ type: "unknown" }),
+  equals(a: ContentIdentity, b: ContentIdentity): boolean {
+    if (a.type !== b.type) return false
+    if (a.type === "unknown") return true
+    return a.value === (b as { value: string }).value
+  },
+}
 
 export const ComponentRelationshipProjectorFor = Schema.Struct({
   type: Schema.Literal("projector_for"),

@@ -1,5 +1,5 @@
-import type { ModelDomainInvalidation } from "./_contracts-shim"
-import type { CatalogPackageRemover } from "./_contracts-shim"
+import type { ModelDomainInvalidation } from "@magnitudedev/icn-contracts"
+import type { CatalogPackageRemover } from "@magnitudedev/icn-contracts"
 import type { ModelDownloadsService } from "./catalog-installations"
 import { ManagedCatalogInstallations } from "./catalog-installations"
 import { ManagedCatalogModels, ModelDomainResolver } from "./catalog-models"
@@ -18,7 +18,7 @@ export const domainChanges = (
   subscribe: (listener: (event: ModelDomainInvalidation) => void) => () => void,
 ): AsyncIterable<ModelDomainInvalidation> => {
   async function* changes(): AsyncGenerator<ModelDomainInvalidation> {
-    yield { revision: initialRevision }
+    yield { revision: BigInt(initialRevision) }
     const queue: ModelDomainInvalidation[] = []
     let resolveNext: ((event: ModelDomainInvalidation) => void) | undefined
     const unsubscribe = subscribe((event) => {

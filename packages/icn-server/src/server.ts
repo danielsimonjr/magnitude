@@ -5,6 +5,7 @@ import { validateServeConfig } from "./config.js"
 import { defaultFakeBackend } from "./fake-backend.js"
 import { createHttpHandler } from "./http/router.js"
 import { MemorySupervisor } from "./memory-supervisor.js"
+import { createServerServicesFromConfig, type ServerServices } from "./services.js"
 import { WorkerSupervisor } from "./worker/index.js"
 
 export interface RunningServer {
@@ -12,6 +13,7 @@ export interface RunningServer {
   readonly identity: ServerIdentity
   readonly memorySupervisor: MemorySupervisor
   readonly workerSupervisor: WorkerSupervisor
+  readonly services: ServerServices
   stop(): Promise<void>
 }
 
@@ -40,6 +42,7 @@ export const startServer = async (config: ServeConfig): Promise<RunningServer> =
   }
   const fakeBackend = config.fake ? defaultFakeBackend() : undefined
   const removeStdinGuard = config.exitOnStdinEof ? installStdinEofGuard() : undefined
+  const services = await createServerServicesFromConfig(config)
 
   if (config.installation !== undefined) {
     writeBootstrapLine(
@@ -55,6 +58,7 @@ export const startServer = async (config: ServeConfig): Promise<RunningServer> =
     identity,
     authorization: config.authToken,
     fakeBackend,
+    services,
   })
 
   server = Bun.serve({
@@ -77,6 +81,7 @@ export const startServer = async (config: ServeConfig): Promise<RunningServer> =
     identity,
     memorySupervisor,
     workerSupervisor,
+    services,
     stop: async () => {
       removeStdinGuard?.()
       await workerSupervisor.shutdownAll()

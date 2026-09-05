@@ -3,14 +3,13 @@ import { Option, Schema } from "effect"
 import {
   ChatCompletionRequest,
   ChatCompletionResponse,
-  type CatalogModelsResponse,
-  type DiscoveredModelsResponse,
   type HealthResponse,
 } from "@magnitudedev/icn-protocol"
 import { authorizeBearer, unauthorizedResponse } from "../auth.js"
 import { defaultFakeBackend, type FakeBackend } from "../fake-backend.js"
 import type { ServerIdentity } from "../config.js"
 import { enabledBackends } from "../build-identity.js"
+import type { ServerServices } from "../services.js"
 import {
   abortReserveBytes,
   observeSystemMemory,
@@ -18,7 +17,7 @@ import {
 } from "@magnitudedev/icn-hardware"
 
 const json = (status: number, body: unknown, headers?: HeadersInit): Response =>
-  new Response(JSON.stringify(body), {
+  new Response(JSON.stringify(body, (_key, value) => (typeof value === "bigint" ? Number(value) : value)), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
@@ -36,6 +35,16 @@ const notImplemented = (operation: string): Response =>
     },
   })
 
+const notFound = (message: string): Response =>
+  json(404, {
+    error: {
+      type: "invalid_request_error",
+      code: "not_found",
+      message,
+      param: null,
+    },
+  })
+
 const decodeChatRequest = Schema.decodeUnknownSync(ChatCompletionRequest)
 const encodeChatResponse = Schema.encodeSync(ChatCompletionResponse)
 
@@ -43,6 +52,7 @@ export interface HttpRouterState {
   readonly identity: ServerIdentity
   readonly authorization?: string
   readonly fakeBackend?: FakeBackend
+  readonly services: ServerServices
 }
 
 export const createHttpHandler = (state: HttpRouterState) => {
@@ -134,21 +144,31 @@ export const createHttpHandler = (state: HttpRouterState) => {
     }
 
     if (method === "GET" && pathname === "/api/v1/catalog/models") {
-      const body: CatalogModelsResponse = {
-        revision: 0,
-        reconciliationComplete: true,
-        models: [],
+      return json(200, await state.services.listCatalogModels())
+    }
+
+    if (method === "GET" && pathname.startsWith("/api/v1/catalog/models/")) {
+      const modelId = decodeURIComponent(pathname.slice("/api/v1/catalog/models/".length))
+      if (modelId.includes("/")) {
+        return notFound(`catalog model ${modelId} was not found`)
       }
-      return json(200, body)
+      const model = await state.services.getCatalogModel(modelId)
+      if (model === undefined) {
+        return notFound(`catalog model ${modelId} was not found`)
+      }
+      return json(200, model)
     }
 
     if (method === "GET" && pathname === "/api/v1/discovery/models") {
-      const body: DiscoveredModelsResponse = {
-        revision: 0,
-        reconciliationComplete: true,
-        models: [],
-      }
-      return json(200, body)
+      return json(200, await state.services.listDiscoveredModels())
+    }
+
+    if (method === "GET" && pathname === "/api/v1/catalog/installations") {
+      return json(200, await state.services.listCatalogInstallations())
+    }
+
+    if (method === "GET" && pathname === "/api/v1/instances") {
+      return json(200, await state.services.listModelInstances())
     }
 
     if (method === "POST" && pathname === "/v1/chat/completions") {
@@ -216,11 +236,14 @@ export const createHttpHandler = (state: HttpRouterState) => {
       return notImplemented("openai responses websocket")
     }
 
+    if (pathname.startsWith("/api/v1/catalog/installations/")) {
+      return notImplemented("catalog installation management")
+    }
     if (pathname.startsWith("/api/v1/catalog/")) {
       return notImplemented("catalog management")
     }
-    if (pathname.startsWith("/api/v1/instances")) {
-      return notImplemented("model instances")
+    if (pathname.startsWith("/api/v1/instances/")) {
+      return notImplemented("model instance management")
     }
     if (pathname.startsWith("/api/v1/models/")) {
       return notImplemented("model management")
