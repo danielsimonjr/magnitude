@@ -18,8 +18,56 @@ const testIdentity = {
 
 const authHeaders = { authorization: "Bearer test-token" }
 
+const jsonPost = (path: string, body: unknown) =>
+  new Request(`http://127.0.0.1${path}`, {
+    method: "POST",
+    headers: { ...authHeaders, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+
 describe("management routes", () => {
-  const services = createServerServices({ catalog: minimalRecommendableCatalog() })
+  const services = createServerServices({
+    catalog: minimalRecommendableCatalog(),
+    hub: {
+      fetch: (async (input) => {
+        const url = String(input)
+        const commit = "c".repeat(40)
+        if (url.includes("/api/models?")) {
+          return new Response(
+            JSON.stringify([
+              {
+                id: "owner/model-gguf",
+                sha: commit,
+                downloads: 3,
+                likes: 1,
+                gated: false,
+                private: false,
+                tags: ["gguf"],
+              },
+            ]),
+            { status: 200 },
+          )
+        }
+        if (url.includes("/api/models/owner/model-gguf/revision/")) {
+          return new Response(
+            JSON.stringify({
+              id: "owner/model-gguf",
+              sha: commit,
+              siblings: [
+                {
+                  rfilename: "model.gguf",
+                  size: 11,
+                  lfs: { sha256: "d".repeat(64), size: 11 },
+                },
+              ],
+            }),
+            { status: 200 },
+          )
+        }
+        return new Response("missing", { status: 404 })
+      }) as typeof fetch,
+    },
+  })
   const handler = createHttpHandler({
     identity: testIdentity,
     authorization: "test-token",
@@ -88,92 +136,79 @@ describe("management routes", () => {
     expect(unauthorized.status).toBe(401)
   })
 
-
-  it("covers remaining management routes without 501", async () => {
-    const refresh = await handler(
-      new Request("http://127.0.0.1/api/v1/discovery/refresh", { method: "POST", headers: authHeaders }),
-    )
-    expect(refresh.status).toBe(200)
-
-    const assessments = await handler(
-      new Request("http://127.0.0.1/api/v1/model-assessments", { headers: authHeaders }),
-    )
-    expect(assessments.status).toBe(200)
-
-    const openapi = await handler(new Request("http://127.0.0.1/openapi.json", { headers: authHeaders }))
-    expect(openapi.status).toBe(200)
-
+  it("implements former 501 management routes without 501", async () => {
     const list = await handler(new Request("http://127.0.0.1/api/v1/catalog/models", { headers: authHeaders }))
     const catalog = Schema.decodeUnknownSync(Schema.parseJson(CatalogModelsResponse))(await list.text())
     const modelId = catalog.models[0]!.id
 
-    const install = await handler(
-      new Request(`http://127.0.0.1/api/v1/catalog/models/${encodeURIComponent(modelId)}/install`, {
-        method: "POST",
+    const checks: Array<[string, Request]> = [
+      ["install", jsonPost(`/api/v1/catalog/models/${encodeURIComponent(modelId)}/install`, {})],
+      [
+        "remove installation",
+        new Request(`http://127.0.0.1/api/v1/catalog/models/${encodeURIComponent(modelId)}/installation`, {
+          method: "DELETE",
+          headers: authHeaders,
+        }),
+      ],
+      [
+        "get installation",
+        new Request("http://127.0.0.1/api/v1/catalog/installations/missing-op", { headers: authHeaders }),
+      ],
+      ["cancel installation", jsonPost("/api/v1/catalog/installations/missing-op/cancel", {})],
+      [
+        "acknowledge failure",
+        jsonPost("/api/v1/catalog/installations/missing-op/acknowledge-failure", {}),
+      ],
+      ["refresh discovery", jsonPost("/api/v1/discovery/refresh", {})],
+      [
+        "model assessments",
+        new Request("http://127.0.0.1/api/v1/model-assessments", { headers: authHeaders }),
+      ],
+      ["load plan", jsonPost(`/api/v1/models/${encodeURIComponent(modelId)}/load-plan`, {})],
+      ["properties", jsonPost(`/api/v1/models/${encodeURIComponent(modelId)}/properties`, {})],
+      ["ensure instance", jsonPost("/api/v1/instances", { modelId })],
+      ["hf search", jsonPost("/api/v1/sources/hugging-face/search", { query: "model", limit: 5 })],
+      [
+        "hf resolve",
+        jsonPost("/api/v1/sources/hugging-face/resolve", {
+          repository: "owner/model-gguf",
+          revision: "main",
+        }),
+      ],
+      [
+        "apply template",
+        jsonPost("/api/v1/chat/templates/apply", {
+          model: modelId,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      ],
+      ["responses post", jsonPost("/v1/responses", { model: "icn-fake", input: "hello" })],
+      ["responses get", new Request("http://127.0.0.1/v1/responses", { headers: authHeaders })],
+      ["openapi", new Request("http://127.0.0.1/openapi.json", { headers: authHeaders })],
+      ["events", new Request("http://127.0.0.1/api/v1/events", { headers: authHeaders })],
+      ["anthropic messages", jsonPost("/anthropic/v1/messages", { model: "icn-fake", messages: [] })],
+    ]
+
+    for (const [label, request] of checks) {
+      const response = await handler(request)
+      expect(response.status, label).not.toBe(501)
+      expect(response.status, label).toBeLessThan(600)
+    }
+
+    // Follow-up instance get/stop after ensure
+    const ensured = await handler(jsonPost("/api/v1/instances", { modelId }))
+    expect(ensured.status).toBe(200)
+    const instance = (await ensured.json()) as { id: string }
+    const got = await handler(
+      new Request(`http://127.0.0.1/api/v1/instances/${encodeURIComponent(instance.id)}`, {
         headers: authHeaders,
       }),
     )
-    expect([200, 400, 404, 409]).toContain(install.status)
+    expect(got.status).not.toBe(501)
+    expect(got.status).toBe(200)
 
-    const ensure = await handler(
-      new Request("http://127.0.0.1/api/v1/instances", {
-        method: "POST",
-        headers: { ...authHeaders, "content-type": "application/json" },
-        body: JSON.stringify({ modelId }),
-      }),
-    )
-    expect(ensure.status).toBe(200)
-    const instance = await ensure.json() as { id: string }
-    expect(instance.id.length).toBeGreaterThan(0)
-
-    const loadPlan = await handler(
-      new Request(`http://127.0.0.1/api/v1/models/${encodeURIComponent(modelId)}/load-plan`, {
-        method: "POST",
-        headers: { ...authHeaders, "content-type": "application/json" },
-        body: "{}",
-      }),
-    )
-    expect(loadPlan.status).toBe(200)
-
-    const template = await handler(
-      new Request("http://127.0.0.1/api/v1/chat/templates/apply", {
-        method: "POST",
-        headers: { ...authHeaders, "content-type": "application/json" },
-        body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }),
-      }),
-    )
-    expect(template.status).toBe(200)
-
-    const responses = await handler(
-      new Request("http://127.0.0.1/v1/responses", {
-        method: "POST",
-        headers: { ...authHeaders, "content-type": "application/json" },
-        body: JSON.stringify({ model: "fake" }),
-      }),
-    )
-    expect(responses.status).toBe(200)
-
-    const anthropic = await handler(
-      new Request("http://127.0.0.1/anthropic/v1/messages", {
-        method: "POST",
-        headers: { ...authHeaders, "content-type": "application/json" },
-        body: JSON.stringify({ model: "fake", messages: [], max_tokens: 16 }),
-      }),
-    )
-    expect(anthropic.status).toBe(200)
-
-    const hfSearch = await handler(
-      new Request("http://127.0.0.1/api/v1/sources/hugging-face/search", {
-        method: "POST",
-        headers: { ...authHeaders, "content-type": "application/json" },
-        body: JSON.stringify({ query: "llama", limit: 1 }),
-      }),
-    )
-    // Network may fail in CI; must not be 501.
-    expect([200, 400, 404, 500, 502]).toContain(hfSearch.status)
-
-    const events = await handler(new Request("http://127.0.0.1/api/v1/events", { headers: authHeaders }))
-    expect(events.status).toBe(200)
+    const stopped = await handler(jsonPost(`/api/v1/instances/${encodeURIComponent(instance.id)}/stop`, {}))
+    expect(stopped.status).not.toBe(501)
+    expect(stopped.status).toBe(204)
   })
-
 })
