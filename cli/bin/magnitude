@@ -2,10 +2,11 @@
 /**
  * Runs the Magnitude CLI directly from a source checkout.
  *
- * `bun run scripts/install-local.ts` symlinks this file onto PATH. It always
- * re-enters the checkout through `cli/src/index.tsx`, which is how the CLI
- * recognises source mode: the background service is then launched from
- * `packages/acn/src/binary.ts` instead of a downloaded release binary.
+ * `bun run scripts/install-local.ts` places this file on PATH (symlink on Unix,
+ * `.cmd` wrapper on Windows). It always re-enters the checkout through
+ * `cli/src/index.tsx`, which is how the CLI recognises source mode: the
+ * background service is then launched from `packages/acn/src/binary.ts`
+ * instead of a downloaded release binary.
  */
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"

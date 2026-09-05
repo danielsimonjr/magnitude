@@ -2,16 +2,17 @@
  * Prepare a source checkout so `magnitude` can be run from it.
  *
  *   bun run install:local                      # install deps, generate version, link `magnitude`
- *   bun run install:local --build-inference    # also build the inference engine locally (needs Rust)
- *   bun run install:local --bin-dir <dir>      # where to place the `magnitude` symlink
+ *   bun run install:local --build-inference    # also build the inference engine locally
+ *   bun run install:local --bin-dir <dir>      # where to place the `magnitude` PATH entry
  *   bun run install:local --no-link            # prepare the checkout without touching PATH
  *   bun run install:local --allow-unreleased   # skip the check that a prebuilt engine exists for this version
- *   bun run install:local --uninstall          # remove the symlink
+ *   bun run install:local --uninstall          # remove the PATH entry
  *
- * Without --build-inference, the CLI downloads the prebuilt inference engine
- * that matches the checked-out version from GitHub releases on first use. With
- * it, the engine is compiled from `inference/` and the checkout runs as a
- * development build.
+ * Prefer a published release tag. Without --build-inference, the CLI downloads the
+ * prebuilt inference engine that matches the checked-out version from GitHub releases
+ * on first use. With --build-inference, the engine is compiled from this checkout and
+ * runs as a development build (requires CMake, a C/C++ toolchain, and currently a
+ * Rust toolchain for planner-input generation).
  */
 import { existsSync, lstatSync, readlinkSync } from "node:fs"
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
@@ -20,10 +21,14 @@ import { delimiter, dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
-const IS_WINDOWS = process.platform === "win32"
+export const IS_WINDOWS = process.platform === "win32"
 const SHIM = resolve(PROJECT_ROOT, "cli", "bin", IS_WINDOWS ? "magnitude.cmd" : "magnitude")
 /** Marker embedded in the Windows wrapper so --uninstall only removes what we created. */
-const WINDOWS_WRAPPER_MARKER = "rem magnitude-install-local"
+export const WINDOWS_WRAPPER_MARKER = "rem magnitude-install-local"
+export const DEFAULT_RELEASE_BASE_URL =
+  "https://github.com/magnitudedev/magnitude/releases/download"
+export const DEFAULT_GITHUB_API_RELEASES_URL =
+  "https://api.github.com/repos/magnitudedev/magnitude/releases"
 
 const args = process.argv.slice(2)
 const has = (flag: string) => args.includes(flag)
@@ -32,38 +37,74 @@ const valueOf = (flag: string): string | undefined => {
   return index === -1 ? undefined : args[index + 1]
 }
 
-const defaultBinDir = (): string => {
-  const bunInstall = process.env.BUN_INSTALL?.trim()
+export const cliReleaseTag = (version: string): string => `@magnitudedev/cli@${version}`
+
+export const releaseManifestUrl = (
+  version: string,
+  baseUrl: string = process.env.MAGNITUDE_RELEASE_BASE_URL ?? DEFAULT_RELEASE_BASE_URL,
+): string => `${baseUrl.replace(/\/+$/, "")}/${cliReleaseTag(version)}/magnitude-release.json`
+
+export const defaultBinDir = (
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+  windows: boolean = IS_WINDOWS,
+): string => {
+  const bunInstall = env.BUN_INSTALL?.trim()
   if (bunInstall) return resolve(bunInstall, "bin")
-  if (IS_WINDOWS) {
-    const localAppData = process.env.LOCALAPPDATA?.trim()
-    return resolve(localAppData ?? resolve(homedir(), "AppData", "Local"), "Magnitude", "bin")
+  if (windows) {
+    const localAppData = env.LOCALAPPDATA?.trim()
+    return resolve(localAppData ?? resolve(home, "AppData", "Local"), "Magnitude", "bin")
   }
-  return resolve(homedir(), ".local", "bin")
+  return resolve(home, ".local", "bin")
 }
 
-const binDir = resolve(valueOf("--bin-dir") ?? defaultBinDir())
-const link = resolve(binDir, IS_WINDOWS ? "magnitude.cmd" : "magnitude")
+export const pathContains = (directory: string, pathValue: string | undefined): boolean =>
+  (pathValue ?? "").split(delimiter).some((entry) => entry && resolve(entry) === resolve(directory))
 
 /**
  * Windows has no reliable symlinks for unprivileged users, so the PATH entry is a
  * tiny .cmd wrapper that forwards to the checkout's shim.
  */
-const windowsWrapper = (): string =>
-  [
-    "@echo off",
-    WINDOWS_WRAPPER_MARKER,
-    `call "${SHIM}" %*`,
-    "",
-  ].join("\r\n")
+export const windowsWrapperContents = (
+  shimPath: string,
+  marker: string = WINDOWS_WRAPPER_MARKER,
+): string =>
+  ["@echo off", marker, `call "${shimPath}" %*`, ""].join("\r\n")
 
-const isOurWindowsWrapper = async (path: string): Promise<boolean> => {
-  try {
-    return (await readFile(path, "utf8")).includes(WINDOWS_WRAPPER_MARKER)
-  } catch {
-    return false
-  }
+export const pickLatestCliReleaseTag = (
+  tags: readonly string[],
+): string | undefined => {
+  const matching = tags.filter((tag) => tag.startsWith("@magnitudedev/cli@"))
+  if (matching.length === 0) return undefined
+  return matching.sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
+    .at(-1)
 }
+
+export const formatMissingReleaseGuidance = (input: {
+  readonly version: string
+  readonly status: number
+  readonly manifestUrl: string
+  readonly latestTag?: string
+}): string => {
+  const tag = input.latestTag ?? cliReleaseTag("<version>")
+  return [
+    `No published Magnitude release exists for the checked-out version ${input.version} (HTTP ${input.status} for ${input.manifestUrl}).`,
+    "Either check out a released tag and rerun:",
+    "",
+    "  git fetch --tags && git checkout " + tag,
+    "  bun run install:local",
+    "",
+    "or build the inference engine from this checkout (requires CMake, a C/C++ toolchain,",
+    "and currently a Rust toolchain for planner-input generation):",
+    "",
+    "  bun run install:local --build-inference",
+    "",
+    "Pass --allow-unreleased to continue anyway.",
+  ].join("\n")
+}
+
+const binDir = resolve(valueOf("--bin-dir") ?? defaultBinDir())
+const link = resolve(binDir, IS_WINDOWS ? "magnitude.cmd" : "magnitude")
 
 const run = async (command: readonly string[], cwd = PROJECT_ROOT): Promise<void> => {
   console.log(`[install-local] ${command.join(" ")}`)
@@ -71,9 +112,6 @@ const run = async (command: readonly string[], cwd = PROJECT_ROOT): Promise<void
   const code = await child.exited
   if (code !== 0) throw new Error(`${command.join(" ")} exited with ${code}`)
 }
-
-const onPath = (directory: string): boolean =>
-  (process.env.PATH ?? "").split(delimiter).some((entry) => entry && resolve(entry) === directory)
 
 const checkBunVersion = async (): Promise<void> => {
   const pkg = JSON.parse(await readFile(resolve(PROJECT_ROOT, "package.json"), "utf8")) as {
@@ -88,6 +126,25 @@ const checkBunVersion = async (): Promise<void> => {
   }
 }
 
+const fetchLatestCliReleaseTag = async (): Promise<string | undefined> => {
+  const apiUrl = (
+    process.env.MAGNITUDE_GITHUB_API_RELEASES_URL ?? DEFAULT_GITHUB_API_RELEASES_URL
+  ).replace(/\/+$/, "")
+  try {
+    const response = await fetch(`${apiUrl}?per_page=30`, {
+      headers: { Accept: "application/vnd.github+json" },
+      redirect: "follow",
+    })
+    if (!response.ok) return undefined
+    const payload = (await response.json()) as Array<{ tag_name?: string }>
+    return pickLatestCliReleaseTag(
+      payload.map((release) => release.tag_name).filter((tag): tag is string => typeof tag === "string"),
+    )
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Without a local engine build, the CLI downloads the prebuilt inference
  * engine for the checked-out version on first use. Fail early, with guidance,
@@ -99,15 +156,13 @@ const ensurePrebuiltInferenceRelease = async (): Promise<void> => {
     await readFile(resolve(PROJECT_ROOT, "packages/launcher/package.json"), "utf8"),
   ) as { version: string }
   const version = launcher.version
-  const baseUrl = (process.env.MAGNITUDE_RELEASE_BASE_URL ??
-    "https://github.com/magnitudedev/magnitude/releases/download").replace(/\/+$/, "")
-  const manifestUrl = `${baseUrl}/@magnitudedev/cli@${version}/magnitude-release.json`
+  const manifestUrl = releaseManifestUrl(version)
   let status: number | undefined
   try {
     status = (await fetch(manifestUrl, { method: "HEAD", redirect: "follow" })).status
   } catch {
     console.warn(
-      `[install-local] Could not reach ${baseUrl} to confirm a prebuilt inference engine for ${version}; continuing.`,
+      `[install-local] Could not reach the release origin to confirm a prebuilt inference engine for ${version}; continuing.`,
     )
     return
   }
@@ -116,21 +171,24 @@ const ensurePrebuiltInferenceRelease = async (): Promise<void> => {
     console.warn(`[install-local] No published release for ${version}; the CLI will fail to start inference until one exists.`)
     return
   }
-  throw new Error(
-    [
-      `No published Magnitude release exists for the checked-out version ${version} (HTTP ${status} for ${manifestUrl}).`,
-      "Either check out a released tag and rerun:",
-      "",
-      "  git fetch --tags && git checkout @magnitudedev/cli@<version>",
-      "  bun run install:local",
-      "",
-      "or build the inference engine from this checkout (requires Rust, CMake, and a C++ compiler):",
-      "",
-      "  bun run install:local --build-inference",
-      "",
-      "Pass --allow-unreleased to continue anyway.",
-    ].join("\n"),
-  )
+  const latestTag = await fetchLatestCliReleaseTag()
+  throw new Error(formatMissingReleaseGuidance({ version, status, manifestUrl, latestTag }))
+}
+
+const isOurWindowsWrapper = async (path: string): Promise<boolean> => {
+  try {
+    return (await readFile(path, "utf8")).includes(WINDOWS_WRAPPER_MARKER)
+  } catch {
+    return false
+  }
+}
+
+const isSymlink = (path: string): boolean => {
+  try {
+    return lstatSync(path).isSymbolicLink()
+  } catch {
+    return false
+  }
 }
 
 const uninstall = async (): Promise<void> => {
@@ -153,16 +211,12 @@ const uninstall = async (): Promise<void> => {
   console.log(`[install-local] Removed ${link}`)
 }
 
-const isSymlink = (path: string): boolean => {
-  try {
-    return lstatSync(path).isSymbolicLink()
-  } catch {
-    return false
-  }
-}
-
 const install = async (): Promise<void> => {
   await checkBunVersion()
+
+  // Fail before dependency install when the checked-out version has no prebuilt engine.
+  if (!has("--build-inference")) await ensurePrebuiltInferenceRelease()
+
   await run(["bun", "install", "--frozen-lockfile"])
 
   if (has("--build-inference")) {
@@ -170,7 +224,6 @@ const install = async (): Promise<void> => {
     await run(["bun", "run", "packages/version/scripts/generate-version.ts", "--dev"])
     await run(["bun", "run", "inference/scripts/build-local.ts"])
   } else {
-    await ensurePrebuiltInferenceRelease()
     await run(["bun", "run", "packages/version/scripts/generate-version.ts"])
   }
 
@@ -184,7 +237,7 @@ const install = async (): Promise<void> => {
     if (existsSync(link) && !(await isOurWindowsWrapper(link))) {
       throw new Error(`${link} exists and was not created by install-local; pass --bin-dir to choose another location`)
     }
-    await writeFile(link, windowsWrapper(), "utf8")
+    await writeFile(link, windowsWrapperContents(SHIM), "utf8")
     console.log(`[install-local] Wrote ${link} -> ${SHIM}`)
   } else if (isSymlink(link)) {
     if (readlinkSync(link) !== SHIM) {
@@ -197,7 +250,7 @@ const install = async (): Promise<void> => {
   }
   if (!IS_WINDOWS) console.log(`[install-local] Linked ${link} -> ${SHIM}`)
 
-  if (!onPath(binDir)) {
+  if (!pathContains(binDir, process.env.PATH)) {
     const hint = IS_WINDOWS
       ? `  [Environment]::SetEnvironmentVariable("Path", "${binDir};" + [Environment]::GetEnvironmentVariable("Path", "User"), "User")\n  (then open a new terminal)`
       : `  export PATH="${binDir}:$PATH"`
@@ -206,10 +259,12 @@ const install = async (): Promise<void> => {
   console.log("\n[install-local] Done. Try:\n\n  magnitude --version\n  magnitude setup\n")
 }
 
-try {
-  if (has("--uninstall")) await uninstall()
-  else await install()
-} catch (error) {
-  console.error(`[install-local] ${error instanceof Error ? error.message : String(error)}`)
-  process.exit(1)
+if (import.meta.main) {
+  try {
+    if (has("--uninstall")) await uninstall()
+    else await install()
+  } catch (error) {
+    console.error(`[install-local] ${error instanceof Error ? error.message : String(error)}`)
+    process.exit(1)
+  }
 }

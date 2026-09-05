@@ -57,25 +57,28 @@ The interactive setup lets you browse the recommended models and choose one your
 
 You can run the CLI straight from a clone without installing the npm package. You need
 [Bun](https://bun.sh) and Git; macOS, Linux, and Windows 10 or later are supported (on Windows the
-installer writes a `magnitude.cmd` wrapper instead of a symlink).
+installer writes a `magnitude.cmd` wrapper instead of a symlink). Check out a published release tag
+so the prebuilt inference engine matches the checkout.
 
 ```sh
 git clone https://github.com/magnitudedev/magnitude.git
 cd magnitude
+git fetch --tags
+git checkout "@magnitudedev/cli@$(npm view @magnitudedev/cli version)"
 bun run install:local
 magnitude setup
 ```
 
-`install:local` installs dependencies, generates the version file, and symlinks `magnitude` into
-`$BUN_INSTALL/bin` (or `~/.local/bin`; pass `--bin-dir <dir>` to choose). In this mode the
-background service runs from the checkout, and the prebuilt inference engine matching the
-checked-out version is downloaded from GitHub releases on first use. The installer checks that such a
-release exists and, if not, tells you to check out a release tag (`git checkout @magnitudedev/cli@<version>`)
-or build the engine yourself.
+`install:local` installs dependencies, generates the version file, and places `magnitude` on PATH in
+`$BUN_INSTALL/bin` (or `~/.local/bin` on Unix / `%LOCALAPPDATA%\Magnitude\bin` on Windows; pass
+`--bin-dir <dir>` to choose). In this mode the background service runs from the checkout, and the
+prebuilt inference engine matching the checked-out version is downloaded from GitHub releases on
+first use. The installer checks that such a release exists and, if not, prints the latest release
+tag to check out or tells you to build the engine yourself.
 
-To compile the inference engine locally instead (requires a Rust toolchain, CMake, and a C++
-compiler), run `bun run install:local --build-inference`. Remove the link with
-`bun run install:local --uninstall`.
+To compile the inference engine locally instead (requires CMake, a C/C++ toolchain, and currently a
+Rust toolchain for planner inputs), run `bun run install:local --build-inference`. Remove the PATH
+entry with `bun run install:local --uninstall`.
 
 </details>
 
