@@ -37,6 +37,19 @@ export interface InstallArtifactOptions {
   readonly observer: Option.Option<ArtifactInstallationObserver>
 }
 
+export interface AcquireReleaseOptions {
+  /**
+   * SHA-256 (lowercase hex) the downloaded `magnitude-release.json` must have.
+   * The launcher supplies the digest pinned into its immutable npm tarball;
+   * daemon-side acquisition (ACN/ICN) has no pin and passes none.
+   */
+  readonly expectedManifestSha256: Option.Option<string>
+}
+
+const NoManifestPin: AcquireReleaseOptions = {
+  expectedManifestSha256: Option.none(),
+}
+
 const NoArtifactInstallationObserver: InstallArtifactOptions = {
   observer: Option.none(),
 }
@@ -231,10 +244,20 @@ const publishCachedManifest = (
     )
   }).pipe(Effect.catchAll(() => Effect.void))
 
+const matchesManifestPin = (
+  manifestSha256: string,
+  expected: Option.Option<string>,
+): boolean =>
+  Option.match(expected, {
+    onNone: () => true,
+    onSome: (pin) => pin === manifestSha256,
+  })
+
 export const acquireRelease = (
   baseUrl: string,
   version: string,
-  cacheDirectory: string
+  cacheDirectory: string,
+  options: AcquireReleaseOptions = NoManifestPin
 ): Effect.Effect<
   AcquiredRelease,
   ReleaseAcquisitionError,
@@ -247,10 +270,17 @@ export const acquireRelease = (
       const acquired = yield* validateReleaseManifestBytes(cached.value).pipe(
         Effect.option
       )
+      // A cached manifest that no longer matches the pin is stale (or was
+      // written by an unpinned acquirer of the same version); refetch rather
+      // than fail, since the download below is what gets verified.
       if (
         Option.isSome(acquired) &&
         acquired.value.manifest.version === version &&
-        acquired.value.manifest.tag === releaseTag(version)
+        acquired.value.manifest.tag === releaseTag(version) &&
+        matchesManifestPin(
+          acquired.value.manifestSha256,
+          options.expectedManifestSha256
+        )
       ) {
         return acquired.value
       }
@@ -260,6 +290,14 @@ export const acquireRelease = (
       .pipe(Effect.catchAll(() => Effect.void))
     const manifestUrl = releaseUrl(baseUrl, version, "magnitude-release.json")
     const manifestBytes = yield* getBounded(manifestUrl, MANIFEST_LIMIT)
+    const manifestSha256 = createHash("sha256")
+      .update(manifestBytes)
+      .digest("hex")
+    if (!matchesManifestPin(manifestSha256, options.expectedManifestSha256))
+      return yield* failure(
+        "validate",
+        "release manifest differs from the digest pinned in the installed launcher"
+      )
     const acquired = yield* validateReleaseManifestBytes(manifestBytes)
     if (
       acquired.manifest.version !== version ||

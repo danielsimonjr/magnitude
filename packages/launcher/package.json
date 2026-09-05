@@ -32,7 +32,8 @@
     "magnitude": "bin/magnitude.js"
   },
   "files": [
-    "bin/magnitude.js"
+    "bin/magnitude.js",
+    "bin/release-pins.json"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",

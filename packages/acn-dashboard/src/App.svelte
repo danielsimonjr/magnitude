@@ -369,13 +369,13 @@
     const killed = results.filter((result) => result.status === 'killed').length
     const stale = results.filter((result) => result.status === 'stale').length
     const failed = results.filter((result) => result.status === 'failed').length
-    if (results.length === 0) return 'No registered ACNs found'
+    if (results.length === 0) return 'No ACN owner found'
     return `Killed ${killed} ACN${killed === 1 ? '' : 's'}${stale ? `, removed ${stale} stale` : ''}${failed ? `, ${failed} failed` : ''}`
   }
 
   async function killAllAcns() {
     if (killingAcns) return
-    const ok = window.confirm('Kill all registered ACN processes?')
+    const ok = window.confirm('Kill the current ACN owner process?')
     if (!ok) return
 
     killingAcns = true
@@ -461,14 +461,14 @@
       <span class="mark"></span>
       <div>
         <h1>ACN Dashboard</h1>
-        <p>{selectedAcn?.registration.url ?? 'No ACN selected'}</p>
+        <p>{selectedAcn?.url ?? 'No ACN selected'}</p>
       </div>
     </div>
 
     <div class="controls">
       <select bind:value={selectedVersion} aria-label="ACN version">
         {#each acns as acn}
-          <option value={acn.version}>{acn.version} · pid {acn.registration.pid}</option>
+          <option value={acn.version}>{acn.version} · pid {acn.owner.pid}</option>
         {/each}
       </select>
       <button class="icon-button" onclick={() => void fetchAcns()} aria-label="Refresh ACNs" title="Refresh ACNs">↻</button>
@@ -563,8 +563,8 @@
           <strong>{formatBytes(memoryStats.knownBytes)}</strong>
         </div>
         <div class="metric">
-          <span>last command</span>
-          <strong>{formatTime(selectedIntrospection?.activity.lastCommandAt)}</strong>
+          <span>last updated</span>
+          <strong>{formatTime(selectedIntrospection?.session.updatedAt)}</strong>
         </div>
         <div class="metric">
           <span>tokens</span>

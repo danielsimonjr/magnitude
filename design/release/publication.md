@@ -30,7 +30,10 @@ Changesets is the sole authority for the CLI version, npm publication, and npm d
 
 1. Preflight pins source and version, verifies credentials, and rejects conflicting GitHub or npm
    state.
-2. The complete release graph is built and accepted.
+2. The complete release graph is built and accepted. The npm package is prepared only after the
+   release manifest exists and carries that manifest's SHA-256 (`bin/release-pins.json`), so an
+   installed launcher trusts a downloaded manifest only when its digest equals the pin; the public
+   GitHub assets are therefore not a root of trust on their own.
 3. Preflight repeats immediately before the commit point.
 4. Publication creates or resumes the exact private GitHub draft, uploads the complete candidate,
    verifies it, and makes the release public.
@@ -43,6 +46,9 @@ Private drafts are retryable. Public assets are immutable. The only supported pa
 is GitHub-public/npm-absent; the npm-only workflow checks out the exact public tag, verifies the
 existing release, repeats public CLI acquisition, and publishes the already-accepted npm package.
 It never rebuilds or replaces native assets.
+
+The recovery path pins the manifest that is public at recovery time, after verifying its version
+and source commit.
 
 An exact GitHub/npm publication is a successful no-op. An ambiguous npm response counts as success
 only when the registry exposes the expected version and exact integrity.

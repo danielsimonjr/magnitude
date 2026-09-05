@@ -3,6 +3,7 @@ import * as Command from "@effect/platform/Command"
 import * as CommandExecutor from "@effect/platform/CommandExecutor"
 import * as FileSystem from "@effect/platform/FileSystem"
 import { loadSkills } from "@magnitudedev/skills"
+import { buildAgentEnv } from "@magnitudedev/roles"
 import type {
   RunBashResult,
   SessionError,
@@ -75,11 +76,9 @@ export function runBash(
       const shell = process.env.SHELL || "/bin/sh"
       const baseCmd = Command.make(shell, "-c", command).pipe(
         Command.workingDirectory(context.cwd),
-        Command.env({
-          ...process.env,
-          PROJECT_ROOT: context.projectRoot,
-          M: context.scratchpadPath,
-        })
+        // Secrets (tokens, API keys, ...) are stripped from the inherited env;
+        // see sanitizeAgentEnv in @magnitudedev/roles.
+        Command.env(buildAgentEnv(context.projectRoot, context.scratchpadPath, process.env))
       )
       const cmd = stdin ? Command.feed(baseCmd, stdin) : baseCmd
       const proc = yield* Command.start(cmd)

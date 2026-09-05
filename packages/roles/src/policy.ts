@@ -10,21 +10,15 @@ import { expandScratchpadPath } from '@magnitudedev/scratchpad'
 import type { ExecuteHookContext, InterceptorDecision } from '@magnitudedev/harness'
 import type { PolicyRule, PolicyContext } from './types'
 import { isPhysicallyWithin, touchesProtectedPath } from './path-confinement'
-import { magnitudeProtectedPaths, stripMagnitudeSecrets } from './protected-paths'
+import { magnitudeProtectedPaths } from './protected-paths'
+import { buildAgentEnv } from './agent-env'
 
 type FullContext = ExecuteHookContext & { policyContext: PolicyContext }
 
 const proceed: InterceptorDecision<string> = { _tag: 'Proceed' }
 const deny = (message: string): InterceptorDecision<string> => ({ _tag: 'Deny', denial: message })
 
-function agentEnv(cwd: string, scratchpadPath: string): Record<string, string> {
-  return {
-    ...stripMagnitudeSecrets(process.env),
-    NO_COLOR: '1',
-    PROJECT_ROOT: cwd,
-    M: scratchpadPath,
-  }
-}
+const agentEnv = buildAgentEnv
 
 /** Deny forbidden shell commands (respects disableShellSafeguards). */
 export function denyForbiddenCommands(): PolicyRule {

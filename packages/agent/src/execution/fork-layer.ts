@@ -8,7 +8,6 @@
 
 import type { Layer } from 'effect'
 import type { Fork } from '@magnitudedev/event-core'
-import type { ToolInterceptorTag } from './permission-gate'
 import type { WorkingDirectoryTag } from './working-directory'
 import type { AgentStateReaderTag } from '../tools/fork'
 import type { AgentRegistryStateReaderTag } from '../tools/agent-registry-reader'
@@ -32,7 +31,6 @@ export type ForkLayerServices =
   | WindowStateReaderTag
   | WorkingDirectoryTag
   | PolicyContextProviderTag
-  | ToolInterceptorTag
   | ChatPersistence
   | ProjectionReaderTag
   | ShadowVcs

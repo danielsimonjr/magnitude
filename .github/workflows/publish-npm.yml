@@ -61,8 +61,9 @@ jobs:
         env:
           MAGNITUDE_RELEASE_VERSION: ${{ inputs.version }}
           MAGNITUDE_SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+          MAGNITUDE_RELEASE_MANIFEST_OUTPUT: release-candidate/magnitude-release.json
       - id: npm-candidate
-        run: bun run packages/release/scripts/prepare-npm.ts release/npm-candidate
+        run: bun run packages/release/scripts/prepare-npm.ts release/npm-candidate --manifest release-candidate/magnitude-release.json
       - name: Verify public CLI acquisition
         run: bun run packages/release/scripts/accept-public-cli.ts "${{ steps.npm-candidate.outputs.tarball }}"
         env:

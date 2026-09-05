@@ -11,6 +11,7 @@ import {
 } from "@magnitudedev/sdk"
 import { BunSqliteDriverLayer } from "@magnitudedev/sdk/bun"
 import { Duration, Effect, Exit, Layer, Schema, Scope } from "effect"
+import { createHash } from "node:crypto"
 import {
   mkdir,
   mkdtemp,
@@ -22,6 +23,10 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import { releaseUrl } from "@magnitudedev/release/acquisition"
 import { ReleaseManifestSchema } from "@magnitudedev/release/contracts"
+import {
+  decodeReleasePins,
+  RELEASE_PINS_FILENAME,
+} from "@magnitudedev/release"
 
 const BOOTSTRAP_TIMEOUT_MS = 2 * 60_000
 const SHUTDOWN_TIMEOUT_MS = 20_000
@@ -60,9 +65,26 @@ const run = async (
   return stdout
 }
 
+const manifestBytes = await readFile(resolve(candidate, "magnitude-release.json"))
 const manifest = Schema.decodeUnknownSync(
   Schema.parseJson(ReleaseManifestSchema),
-)(await readFile(resolve(candidate, "magnitude-release.json"), "utf8"))
+)(manifestBytes.toString("utf8"))
+const manifestSha256 = createHash("sha256").update(manifestBytes).digest("hex")
+
+// The tarball must pin exactly this candidate's manifest: the launcher trusts
+// the manifest only when its digest matches these pins, and the pins are the
+// only part of the release that cannot be rewritten after publication.
+const pins = await Effect.runPromise(
+  decodeReleasePins(
+    await run(["tar", "-xzOf", tarball, `package/bin/${RELEASE_PINS_FILENAME}`]),
+  ),
+)
+if (pins.version !== manifest.version || pins.manifestSha256 !== manifestSha256) {
+  throw new Error(
+    `npm candidate pins ${pins.version}@${pins.manifestSha256}; ` +
+      `candidate manifest is ${manifest.version}@${manifestSha256}`,
+  )
+}
 
 const routes = new Map(
   [

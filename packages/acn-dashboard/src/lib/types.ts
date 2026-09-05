@@ -1,4 +1,4 @@
-import type { AcnRegistration } from '@magnitudedev/acn-protocol'
+import type { AcnOwnerRecord } from '@magnitudedev/acn-protocol/coordination'
 
 export type {
   AcnDisplayViewIntrospection,
@@ -18,8 +18,8 @@ export type {
 
 export interface AcnInfo {
   readonly version: string
-  readonly registration: AcnRegistration
-  readonly registryPath: string
+  readonly owner: AcnOwnerRecord
+  readonly url: string
   readonly health: {
     readonly ok: boolean
     readonly service?: string
