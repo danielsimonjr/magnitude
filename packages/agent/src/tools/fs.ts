@@ -5,6 +5,7 @@
 import { Effect, Option, Schema } from 'effect'
 import { defineHarnessTool, StreamValidationError } from '@magnitudedev/harness'
 import { resolve } from 'path'
+import { tmpdir } from 'os'
 import { validateAndApply } from '../util/edit'
 import { WorkingDirectoryTag } from '../execution/working-directory'
 import { captureContextImageFromFile } from '../util/capture-context-image'
@@ -41,7 +42,7 @@ function checkWriteConfinement(fullPath: string, roots: readonly string[]): Effe
       if (touchesProtectedPath(fullPath, magnitudeProtectedPaths())) {
         throw new Error('Cannot write to protected Magnitude paths')
       }
-      if (escapesViaSymlink(fullPath, [...roots, '/tmp'])) {
+      if (escapesViaSymlink(fullPath, [...roots, '/tmp', tmpdir()])) {
         throw new Error('Cannot write files outside allowed directories (symlink escapes allowed roots)')
       }
     },

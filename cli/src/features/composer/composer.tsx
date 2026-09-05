@@ -1,4 +1,6 @@
 import { TextAttributes, type KeyEvent } from '@opentui/core'
+import { homedir } from 'node:os'
+import { sep } from 'node:path'
 import { useCallback, useRef, useState, useMemo } from 'react'
 import stringWidth from 'string-width'
 import { Effect } from 'effect'
@@ -47,8 +49,8 @@ import {
 } from '../notification-area/notification-area'
 
 const displayWorkingDirectory = (cwd: string): string => {
-  const home = process.env.HOME
-  return home && (cwd === home || cwd.startsWith(home + '/'))
+  const home = homedir()
+  return home && (cwd === home || cwd.startsWith(home + sep))
     ? `~${cwd.slice(home.length)}`
     : cwd
 }

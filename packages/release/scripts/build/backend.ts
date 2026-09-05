@@ -17,11 +17,14 @@ import {
 import { buildIcnBinary } from "../../../../inference/scripts/compile"
 import { inspectCudaCompatibility } from "./cuda"
 
+// Linux toolkits keep runtime .so files in lib64; Windows toolkits keep the runtime DLLs in
+// bin (newer toolkits: bin\x64), with lib\x64 holding import libraries only.
 const fixedCudaDirectories = (): readonly string[] => {
   const root = process.env.CUDA_PATH?.trim()
   return root
     ? [
       resolve(root, "bin"),
+      resolve(root, "bin", "x64"),
       resolve(root, "lib64"),
       resolve(root, "lib", "x64"),
     ]

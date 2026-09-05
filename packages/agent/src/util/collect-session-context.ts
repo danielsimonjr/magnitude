@@ -15,6 +15,7 @@ import { knapsackFolderTree } from './folder-tree-knapsack'
 import { truncateFolderTree } from '../truncation'
 import { buildTree } from '../truncation/folder-tree/tree'
 import { walk } from './walk'
+import { shellDisplayName } from '@magnitudedev/utils'
 
 const logSkillLoadDiagnostic = (diagnostic: SkillLoadDiagnostic): void => {
   logger.error(skillLoadDiagnosticLogFields(diagnostic), 'Failed to load skill while collecting session context')
@@ -193,7 +194,7 @@ export async function collectSessionContext(opts?: CollectSessionContextOptions)
   return {
     cwd,
     platform,
-    shell: process.env.SHELL?.split('/').pop() || 'bash',
+    shell: shellDisplayName(process.env.SHELL),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     username: userInfo.username,
     fullName: userInfo.fullName,

@@ -8,6 +8,7 @@
  * boxes and the startup header slot.
  */
 import { useCallback, type ReactNode } from "react";
+import { homedir } from "node:os";
 import { Option } from "effect";
 import {
   useAtomValue,
@@ -66,7 +67,6 @@ import { BOX_CHARS } from "./utils/ui-constants";
 import type { ActionId } from "./types/ui-actions";
 
 import { FatalErrorScreen } from "./features/app-shell/connection-error";
-import { WindowsWarningScreen } from "./features/app-shell/windows-warning";
 import { StartupHeader } from "./features/chat-timeline/startup-header";
 import { Button } from "./components/button";
 import { ChatTimelineContainer } from "./features/chat-timeline/container";
@@ -143,10 +143,6 @@ function CliEnvironmentGate({
   const exitApp = useCallback(() => {
     process.kill(process.pid, "SIGINT");
   }, []);
-
-  if (process.platform === "win32") {
-    return <WindowsWarningScreen onExit={exitApp} />;
-  }
 
   if (connectionError && !connectionError.reconnecting) {
     return (
@@ -506,10 +502,11 @@ function CliAppContent(
   const startupHeader = (
     <StartupHeader
       width={chatColumnWidth}
-      workingDirectory={clientWorkingDirectory.replace(
-        process.env.HOME || "",
-        "~"
-      )}
+      workingDirectory={
+        clientWorkingDirectory.startsWith(homedir())
+          ? `~${clientWorkingDirectory.slice(homedir().length)}`
+          : clientWorkingDirectory
+      }
       recentChats={
         !props.onboardingSetupOpen &&
         !widget.hasActivity &&

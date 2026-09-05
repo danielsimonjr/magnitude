@@ -1,5 +1,11 @@
 {
   "extends": "../../tsconfig.json",
-  "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts"],
-  "compilerOptions": { "allowJs": true, "checkJs": true, "moduleResolution": "bundler" }
+  "include": ["src", "vite.config.ts"],
+  "compilerOptions": {
+    "types": ["bun"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "moduleResolution": "bundler",
+    "noEmit": true
+  }
 }

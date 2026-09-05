@@ -1,0 +1,181 @@
+/* TokenRenderer */
+.token-renderer {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.token-renderer .token {
+  cursor: pointer;
+  border-radius: 2px;
+  transition: filter 0.1s;
+  padding: 1px 2px;
+  margin: 0 1px;
+}
+
+.token-renderer .token:hover {
+  filter: brightness(1.25);
+}
+
+/* RawTokenStrip */
+.token-strip {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.token-strip .token {
+  display: inline-block;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: filter 0.1s;
+  padding: 1px 2px;
+  margin: 0 1px;
+  background: rgba(128, 128, 128, 0.08);
+}
+
+.token-strip .token.odd {
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.token-strip .token.whitespace {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.token-strip .token:hover {
+  filter: brightness(1.25);
+  background: rgba(128, 128, 128, 0.3);
+}
+
+.raw-token-tooltip {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+
+.raw-token-tooltip .id {
+  font-family: monospace;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+/* LogprobTooltip */
+.logprob-tooltip {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  min-width: 220px;
+  max-width: 320px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+
+.logprob-tooltip .header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.logprob-tooltip .token-text {
+  font-family: monospace;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+}
+
+.logprob-tooltip .prob {
+  font-size: 0.75rem;
+  color: var(--accent-green);
+  font-weight: 600;
+}
+
+.logprob-tooltip .alternatives {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.logprob-tooltip .alt-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 45px;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.75rem;
+}
+
+.logprob-tooltip .alt-row.current {
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 3px;
+  padding: 1px 2px;
+}
+
+.logprob-tooltip .alt-token {
+  font-family: monospace;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logprob-tooltip .bar-wrap {
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  height: 6px;
+  overflow: hidden;
+}
+
+.logprob-tooltip .bar {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.2s;
+}
+
+.logprob-tooltip .alt-prob {
+  color: var(--text-muted);
+  text-align: right;
+}
+
+/* TurnDetail */
+.toggle-pill {
+  font-size: 0.75rem;
+  font-family: monospace;
+  padding: 0.15rem 0.6rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.toggle-pill:hover {
+  color: var(--text-secondary);
+  border-color: var(--text-secondary);
+}
+.toggle-pill.active {
+  background: var(--accent-blue);
+  color: #000;
+  border-color: var(--accent-blue);
+}
+.toggle-pill.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.toggle-pill.disabled:hover {
+  color: var(--text-muted);
+  border-color: var(--border);
+}

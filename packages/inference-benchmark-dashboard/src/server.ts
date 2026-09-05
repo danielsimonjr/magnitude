@@ -154,7 +154,7 @@ Bun.serve({
         }
         if (request.method === "POST" && parts[3] === "cancel") {
           const known = await Effect.runPromise(listRuns())
-          if (!known.some((run) => run.id === id)) return json({ error: "run not found" }, { status: 404 })
+          if (!known.some((run) => run.runId === id)) return json({ error: "run not found" }, { status: 404 })
           const manifest = JSON.parse(await readFile(join(runDirectory(id), "manifest.json"), "utf8")) as { pid?: unknown; runId?: unknown }
           const lock = JSON.parse(await readFile(activeRunLockPath(), "utf8")) as { pid?: unknown; runId?: unknown }
           if (manifest.runId !== id || lock.runId !== id || !Number.isSafeInteger(manifest.pid) || lock.pid !== manifest.pid) return json({ error: "run is not the active benchmark process" }, { status: 409 })

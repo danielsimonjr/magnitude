@@ -1,8 +1,11 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "types": ["bun", "svelte"],
-    "moduleResolution": "bundler"
+    "types": ["bun"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "moduleResolution": "bundler",
+    "noEmit": true
   },
-  "include": ["src", "vite.config.ts", "svelte.config.js"]
+  "include": ["src", "vite.config.ts"]
 }

@@ -31,6 +31,7 @@ import { buildCliBinary } from "./cli"
 import {
   buildArchive,
   type ArchiveSource,
+  loaderPathVariable,
   run,
   verifyAppleDeploymentTarget,
   verifyOwnedLoaderPaths,
@@ -222,7 +223,10 @@ export const smokeHostArchives = async (
     const environment = host.id.startsWith("windows-")
       ? {
         ...process.env,
-        PATH: [resolve(icnRoot, "runtime"), process.env.PATH]
+        [loaderPathVariable(host.id)]: [
+          resolve(icnRoot, "runtime"),
+          process.env[loaderPathVariable(host.id)],
+        ]
           .filter(Boolean)
           .join(delimiter),
       }
@@ -277,8 +281,12 @@ export const buildHostArtifacts = async (
     features: host.cargoFeatures,
     buildEnvironment: releaseBuildEnvironment(host),
   })
+  // Module names are libggml-cpu*.so, libggml-cpu*.dylib, or ggml-cpu*.dll (no "lib" prefix
+  // on Windows); on Windows ignore MSVC import libraries that may sit beside the modules.
   const cpuModules = icn.backendModules.filter((file) =>
-    basename(file).toLowerCase().includes("cpu")
+    basename(file).toLowerCase().includes("cpu") &&
+    !basename(file).toLowerCase().endsWith(".lib") &&
+    !basename(file).toLowerCase().endsWith(".exp")
   )
   if (cpuModules.length === 0) {
     throw new Error(`${host.id} ICN base emitted no CPU module`)
@@ -306,11 +314,7 @@ export const buildHostArtifacts = async (
   await chmod(acn, 0o755)
   await chmod(icn.binary, 0o755)
 
-  const loader = host.id.startsWith("windows-")
-    ? "PATH"
-    : host.id.startsWith("darwin-")
-      ? "DYLD_LIBRARY_PATH"
-      : "LD_LIBRARY_PATH"
+  const loader = loaderPathVariable(host.id)
   const eligibility = await run([
     icn.binary,
     "backend-eligibility",
