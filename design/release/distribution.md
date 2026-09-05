@@ -22,11 +22,14 @@ artifacts. The release graph is product configuration, not a plugin system.
 | ICN base | every host | one `bin/magnitude-inference` executable, planner inputs, common runtime libraries, and CPU modules |
 | ICN backend pack | compatible hosts | one Metal, CUDA, or Vulkan module family and its redistributable runtime libraries |
 
-Published hosts are Apple arm64, Apple x64, Linux GNU arm64, and Linux GNU x64. Windows artifacts
-are not published. Each backend pack names exactly one required ICN base and must have the same
-native-build identity and backend-module ABI as that base.
+Published hosts are Apple arm64, Apple x64, Linux GNU arm64, Linux GNU x64, and Windows x64
+(MSVC, Windows 10 1809 or later). Each backend pack names exactly one required ICN base and must
+have the same native-build identity and backend-module ABI as that base.
 
 Apple arm64 publishes Metal. Linux arm64 and x64 publish Vulkan plus CUDA 11.8 and CUDA 12.9.
+Windows x64 publishes Vulkan and CUDA 12.9; its executables carry the `.exe` extension, its
+backend modules and runtime libraries are DLLs, and runtime libraries are located through `PATH`
+rather than a loader path variable.
 CUDA device-image and driver compatibility is defined by
 [CUDA compatibility](../inference/cuda-compatibility.md).
 

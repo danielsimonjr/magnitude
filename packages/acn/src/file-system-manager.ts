@@ -551,11 +551,15 @@ export const FileSystemManagerLive: Layer.Layer<
       watchHostFile,
       listHostSubdirectories,
       revealDirectory: Effect.fn("acn.file-system-manager.reveal-directory")(function* (cwd) {
+        // `explorer.exe` reports a non-zero exit even on success, so Windows goes
+        // through `start`, which returns 0 once the shell has accepted the request.
         const command = process.platform === "darwin"
           ? Command.make("open", "-R", cwd)
           : process.platform === "linux"
             ? Command.make("xdg-open", cwd)
-            : null
+            : process.platform === "win32"
+              ? Command.make("cmd", "/d", "/c", "start", "", cwd)
+              : null
         if (command === null) return yield* new RevealUnsupported()
         const exitCode = yield* Effect.scoped(
           executor.start(command).pipe(Effect.flatMap((process) => process.exitCode)),

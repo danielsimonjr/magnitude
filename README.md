@@ -38,7 +38,7 @@ Set up local models for me with the Magnitude CLI. Install it with `npm i -g @ma
 
 Your agent will profile your hardware, walk you through the best local models for it, download the ones you pick, and switch itself over to them.
 
-Magnitude supports macOS and Linux. Windows is supported through WSL.
+Magnitude supports macOS, Linux, and Windows 10 or later (x64). On Windows the agent shell needs a POSIX shell: install [Git for Windows](https://gitforwindows.org), which provides Git Bash. WSL also works.
 
 <details>
 <summary>Want to browse the models directly?</summary>
@@ -56,7 +56,8 @@ The interactive setup lets you browse the recommended models and choose one your
 <summary>Run from a source checkout</summary>
 
 You can run the CLI straight from a clone without installing the npm package. You need
-[Bun](https://bun.sh) and Git; macOS, Linux, and WSL are supported.
+[Bun](https://bun.sh) and Git; macOS, Linux, and Windows 10 or later are supported (on Windows the
+installer writes a `magnitude.cmd` wrapper instead of a symlink).
 
 ```sh
 git clone https://github.com/magnitudedev/magnitude.git

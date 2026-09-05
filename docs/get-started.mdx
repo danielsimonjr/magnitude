@@ -14,7 +14,7 @@ Set up local models for me with the Magnitude CLI. Install it with `npm i -g @ma
 
 Your agent will profile your hardware, walk you through the best local models for it, download the ones you pick, and switch itself over to them.
 
-Magnitude supports macOS and Linux. Windows is supported through WSL.
+Magnitude supports macOS, Linux, and Windows 10 or later (x64).
 
 ## Browse the models directly
 
@@ -91,10 +91,10 @@ You do not need to learn the Magnitude CLI. Your agent can inspect Magnitude and
 
 ## Windows
 
-On Windows, install WSL first:
+Magnitude runs natively on Windows 10 (version 1809 or later) and Windows 11, x64. Install Node.js or Bun, then follow the installation steps above from PowerShell or Windows Terminal.
 
-```powershell
-wsl --install
-```
+- The agent shell tool runs commands through a POSIX shell so its safety checks apply. Install [Git for Windows](https://gitforwindows.org), which provides Git Bash; Magnitude finds it automatically. You can also point `SHELL` at any bash executable.
+- The background service is registered as a Scheduled Task that starts at login. Use `magnitude service uninstall` to remove it.
+- Local inference uses the CPU by default, CUDA on NVIDIA GPUs, and Vulkan on other GPUs, chosen automatically during setup.
 
-Restart the computer, open WSL, then follow the installation steps above.
+WSL remains supported: run `wsl --install`, restart, open WSL, and follow the Linux instructions inside it.

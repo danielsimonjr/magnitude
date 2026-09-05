@@ -14,13 +14,16 @@
  * development build.
  */
 import { existsSync, lstatSync, readlinkSync } from "node:fs"
-import { mkdir, readFile, rm, symlink } from "node:fs/promises"
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { delimiter, dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
-const SHIM = resolve(PROJECT_ROOT, "cli", "bin", "magnitude")
+const IS_WINDOWS = process.platform === "win32"
+const SHIM = resolve(PROJECT_ROOT, "cli", "bin", IS_WINDOWS ? "magnitude.cmd" : "magnitude")
+/** Marker embedded in the Windows wrapper so --uninstall only removes what we created. */
+const WINDOWS_WRAPPER_MARKER = "rem magnitude-install-local"
 
 const args = process.argv.slice(2)
 const has = (flag: string) => args.includes(flag)
@@ -32,11 +35,35 @@ const valueOf = (flag: string): string | undefined => {
 const defaultBinDir = (): string => {
   const bunInstall = process.env.BUN_INSTALL?.trim()
   if (bunInstall) return resolve(bunInstall, "bin")
+  if (IS_WINDOWS) {
+    const localAppData = process.env.LOCALAPPDATA?.trim()
+    return resolve(localAppData ?? resolve(homedir(), "AppData", "Local"), "Magnitude", "bin")
+  }
   return resolve(homedir(), ".local", "bin")
 }
 
 const binDir = resolve(valueOf("--bin-dir") ?? defaultBinDir())
-const link = resolve(binDir, "magnitude")
+const link = resolve(binDir, IS_WINDOWS ? "magnitude.cmd" : "magnitude")
+
+/**
+ * Windows has no reliable symlinks for unprivileged users, so the PATH entry is a
+ * tiny .cmd wrapper that forwards to the checkout's shim.
+ */
+const windowsWrapper = (): string =>
+  [
+    "@echo off",
+    WINDOWS_WRAPPER_MARKER,
+    `call "${SHIM}" %*`,
+    "",
+  ].join("\r\n")
+
+const isOurWindowsWrapper = async (path: string): Promise<boolean> => {
+  try {
+    return (await readFile(path, "utf8")).includes(WINDOWS_WRAPPER_MARKER)
+  } catch {
+    return false
+  }
+}
 
 const run = async (command: readonly string[], cwd = PROJECT_ROOT): Promise<void> => {
   console.log(`[install-local] ${command.join(" ")}`)
@@ -111,6 +138,14 @@ const uninstall = async (): Promise<void> => {
     console.log(`[install-local] Nothing to remove at ${link}`)
     return
   }
+  if (IS_WINDOWS) {
+    if (!(await isOurWindowsWrapper(link))) {
+      throw new Error(`${link} was not created by install-local; refusing to remove it`)
+    }
+    await rm(link)
+    console.log(`[install-local] Removed ${link}`)
+    return
+  }
   if (!isSymlink(link) || readlinkSync(link) !== SHIM) {
     throw new Error(`${link} was not created by install-local; refusing to remove it`)
   }
@@ -127,9 +162,6 @@ const isSymlink = (path: string): boolean => {
 }
 
 const install = async (): Promise<void> => {
-  if (process.platform === "win32") {
-    throw new Error("Run Magnitude from source inside WSL on Windows; native Windows is not supported")
-  }
   await checkBunVersion()
   await run(["bun", "install", "--frozen-lockfile"])
 
@@ -148,7 +180,13 @@ const install = async (): Promise<void> => {
   }
 
   await mkdir(binDir, { recursive: true })
-  if (isSymlink(link)) {
+  if (IS_WINDOWS) {
+    if (existsSync(link) && !(await isOurWindowsWrapper(link))) {
+      throw new Error(`${link} exists and was not created by install-local; pass --bin-dir to choose another location`)
+    }
+    await writeFile(link, windowsWrapper(), "utf8")
+    console.log(`[install-local] Wrote ${link} -> ${SHIM}`)
+  } else if (isSymlink(link)) {
     if (readlinkSync(link) !== SHIM) {
       throw new Error(`${link} already points somewhere else; pass --bin-dir to choose another location`)
     }
@@ -157,13 +195,13 @@ const install = async (): Promise<void> => {
   } else {
     await symlink(SHIM, link)
   }
-  console.log(`[install-local] Linked ${link} -> ${SHIM}`)
+  if (!IS_WINDOWS) console.log(`[install-local] Linked ${link} -> ${SHIM}`)
 
   if (!onPath(binDir)) {
-    console.log(
-      `\n[install-local] ${binDir} is not on your PATH. Add it, for example:\n\n` +
-        `  export PATH="${binDir}:$PATH"\n`,
-    )
+    const hint = IS_WINDOWS
+      ? `  [Environment]::SetEnvironmentVariable("Path", "${binDir};" + [Environment]::GetEnvironmentVariable("Path", "User"), "User")\n  (then open a new terminal)`
+      : `  export PATH="${binDir}:$PATH"`
+    console.log(`\n[install-local] ${binDir} is not on your PATH. Add it, for example:\n\n${hint}\n`)
   }
   console.log("\n[install-local] Done. Try:\n\n  magnitude --version\n  magnitude setup\n")
 }
