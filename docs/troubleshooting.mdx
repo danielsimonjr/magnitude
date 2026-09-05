@@ -16,6 +16,12 @@ Ask your agent to resume setup and follow `magnitude docs onboarding` again. Com
 
 If the CLI does not start, check `magnitude --version`, then update or reinstall it. On Windows, make sure you are on Windows 10 1809 or later and that Git for Windows is installed if the agent shell reports that no POSIX shell was found. If you were using interactive setup, you can run `magnitude setup` again.
 
+If you installed from a git clone, `install:local` needs a published release tag that matches the
+checked-out version (or `bun run install:local --build-inference`). Running it on `main` before that
+version is published fails the prebuilt-engine check. Re-run the installer after
+`git fetch --tags && git checkout @magnitudedev/cli@<version>`, and confirm the installer's bin
+directory is on your PATH.
+
 ## Harness cannot use Magnitude
 
 Ask the agent to check that the Magnitude service is running and resync the harness connection. For manual recovery:

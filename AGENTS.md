@@ -44,6 +44,12 @@ Projection output is JSON — pipe to `jq` for querying. Events are 0-indexed.
 
 `bun logs` — view CLI logger output for the current session.
 
+## Source checkout install
+
+To run the product CLI from this repository instead of the npm package, check out a published
+`@magnitudedev/cli@*` tag and run `bun run install:local`. See `info/source-checkout-install.md` and
+`design/release/source-checkout.md`. Use `--build-inference` only when you need a local engine build.
+
 ## Testing
 
 Run tests with `bunx --bun vitest` (not `bun vitest` — without `--bun`, vitest workers run under Node and Bun globals aren't available).
@@ -52,6 +58,8 @@ Run tests with `bunx --bun vitest` (not `bun vitest` — without `--bun`, vitest
 cd packages/agent && bunx --bun vitest run    # single run
 cd packages/agent && bunx --bun vitest        # watch mode
 ```
+
+Script unit tests under `scripts/` use `bun test` (for example `bun test scripts/install-local.test.ts`).
 
 ## Type Checking
 
