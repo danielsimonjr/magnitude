@@ -1,7 +1,9 @@
 import { Option } from "effect"
 import { createHash } from "node:crypto"
 import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync, lstatSync } from "node:fs"
+import { homedir } from "node:os"
 import { basename, dirname, join, relative } from "node:path"
+import { isAbsoluteFsPath } from "./paths.js"
 import {
   contentIdentity,
   InventoryError,
@@ -127,27 +129,15 @@ export interface InventoryConfig {
 
 export const InventoryConfig = {
   defaultRoot(): string {
-    const home = process.env.HOME
-    if (home === undefined) {
-      throw InventoryError.InvalidRequest({
-        message: "cannot determine the user home directory for the model store",
-      })
-    }
-    return join(home, ".magnitude/models")
+    return join(homedir(), ".magnitude/models")
   },
 
   defaultCacheRoot(): string {
-    const home = process.env.HOME
-    if (home === undefined) {
-      throw InventoryError.InvalidRequest({
-        message: "cannot determine the user home directory for the cache",
-      })
-    }
-    return join(home, ".magnitude/cache")
+    return join(homedir(), ".magnitude/cache")
   },
 
   withRoots(root: string, cacheRoot: string): InventoryConfig {
-    if (!root.startsWith("/") || !cacheRoot.startsWith("/")) {
+    if (!isAbsoluteFsPath(root) || !isAbsoluteFsPath(cacheRoot)) {
       throw InventoryError.InvalidRequest({
         message: "model store and cache roots must be absolute",
       })
@@ -1284,17 +1274,17 @@ const persistInventoryIndex = (
 }
 
 const validateConfig = (config: InventoryConfig): void => {
-  if (!config.root.startsWith("/")) {
+  if (!isAbsoluteFsPath(config.root)) {
     throw InventoryError.InvalidRequest({ message: "model store root must be absolute" })
   }
-  if (!config.cache_root.startsWith("/")) {
+  if (!isAbsoluteFsPath(config.cache_root)) {
     throw InventoryError.InvalidRequest({ message: "cache root must be absolute" })
   }
   if (config.max_concurrent_downloads === 0) {
     throw InventoryError.InvalidRequest({ message: "max_concurrent_downloads must be positive" })
   }
   for (const root of config.hf_cache_dirs) {
-    if (!root.startsWith("/")) {
+    if (!isAbsoluteFsPath(root)) {
       throw InventoryError.InvalidRequest({
         message: `configured Hugging Face cache root must be absolute: ${root}`,
       })
