@@ -2,8 +2,9 @@ import { createHash } from "node:crypto"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { Option } from "effect"
 import { describe, expect, it } from "vitest"
-import { ContentIdentity } from "./_contracts-shim"
+import { contentIdentity } from "@magnitudedev/icn-contracts"
 import {
   DownloadIntegrity,
   atomicJson,
@@ -19,11 +20,11 @@ const modelComponent = (contents: Uint8Array) => {
   const digest = createHash("sha256").update(contents).digest("hex")
   return {
     path: "model.gguf",
-    role: "Weights" as const,
-    size_bytes: contents.length,
-    content: ContentIdentity.Sha256(digest),
-    shard_index: undefined,
-    relationship: undefined,
+    role: "weights" as const,
+    size_bytes: BigInt(contents.length),
+    content: contentIdentity.sha256(digest),
+    shard_index: Option.none(),
+    relationship: Option.none(),
   }
 }
 
@@ -70,14 +71,14 @@ describe("download", () => {
 
   it("equivalent revision requires matching path size and sha256", () => {
     const expected = modelComponent(new TextEncoder().encode("model contents"))
-    const sha256 = expected.content._tag === "Sha256" ? expected.content.value : ""
-    const metadata = { size: expected.size_bytes, sha256 }
+    const sha256 = expected.content.type === "sha256" ? expected.content.value : ""
+    const metadata = { size: Number(expected.size_bytes), sha256 }
     expect(
       validateEquivalentFile("owner/repository", "a".repeat(40), "b".repeat(40), expected, metadata),
     ).toBeUndefined()
     expect(
       validateEquivalentFile("owner/repository", "a".repeat(40), "b".repeat(40), expected, {
-        size: expected.size_bytes + 1,
+        size: Number(expected.size_bytes) + 1,
         sha256,
       }),
     ).toBeDefined()

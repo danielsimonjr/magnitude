@@ -1,33 +1,40 @@
-import { MemoryDomainId, MemoryTopology, type HardwareSnapshot } from "./_contracts-shim"
+import { Option } from "effect"
+import { MemoryTopology, systemMemoryDomainId, type HardwareSnapshot } from "@magnitudedev/icn-contracts"
 
-export const systemMemoryTopology = (capacityBytes: number): MemoryTopology =>
-  MemoryTopology.fromSnapshot({
-    captured_at: 1,
+export const systemMemoryTopology = (capacityBytes: number) => {
+  const snapshot = {
+    captured_at: 1n,
     platform: "test",
     architecture: "test",
-    system_product_name: null,
-    cpu_model: null,
+    system_product_name: Option.none(),
+    cpu_model: Option.none(),
     logical_cores: 1,
     system_memory: {
-      physical_capacity_bytes: capacityBytes,
-      physical_available_bytes: capacityBytes,
-      allocation_capacity_bytes: capacityBytes,
-      allocation_headroom_bytes: capacityBytes,
-      assess_reserve_bytes: 0,
-      abort_reserve_bytes: 0,
+      physical_capacity_bytes: BigInt(capacityBytes),
+      physical_available_bytes: BigInt(capacityBytes),
+      allocation_capacity_bytes: BigInt(capacityBytes),
+      allocation_headroom_bytes: BigInt(capacityBytes),
+      assess_reserve_bytes: 0n,
+      abort_reserve_bytes: 0n,
     },
     native_build: "test",
     enabled_backends: ["cpu"],
     topology_fingerprint: "test",
     memory_domains: [
       {
-        id: MemoryDomainId.system(),
-        kind: "system",
-        total_capacity_bytes: capacityBytes,
-        stable_capacity_bytes: capacityBytes,
-        current_free_bytes: capacityBytes,
+        id: systemMemoryDomainId(),
+        kind: "system" as const,
+        total_capacity_bytes: BigInt(capacityBytes),
+        stable_capacity_bytes: BigInt(capacityBytes),
+        current_free_bytes: Option.some(BigInt(capacityBytes)),
         shares_system_memory: true,
         devices: [],
       },
     ],
-  } as HardwareSnapshot)
+  } satisfies HardwareSnapshot
+  const topology = MemoryTopology.fromSnapshot(snapshot)
+  if (topology === null) {
+    throw new Error("failed to build system memory topology")
+  }
+  return topology
+}

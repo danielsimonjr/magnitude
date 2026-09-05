@@ -1,12 +1,14 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import {
-  CatalogBaseId,
-  CatalogVariantId,
+  catalogBaseId,
+  catalogVariantId,
+  ModelIdError,
+  modelPackageId,
   type CatalogPackageAffiliation,
   type CatalogPackageRole,
   type ModelPackageId,
-} from "./_contracts-shim"
+} from "@magnitudedev/icn-contracts"
 import { validIdentityComponent, validVariantId } from "./catalog"
 
 export class CatalogAffiliations {
@@ -59,9 +61,9 @@ export class CatalogAffiliations {
   persist(root: string): void {
     const payload = {
       affiliations: this.entries().map((entry) => ({
-        modelId: entry.model_id,
-        variantId: entry.variant_id,
-        packageId: entry.package_id,
+        modelId: entry.modelId,
+        variantId: entry.variantId,
+        packageId: entry.packageId,
         repository: entry.repository,
         role: entry.role,
       })),
@@ -100,18 +102,17 @@ const decodeEntry = (value: unknown): CatalogPackageAffiliation | undefined => {
   if (role !== "Target" && role !== "Dependency") {
     return undefined
   }
-  try {
-    const affiliation: CatalogPackageAffiliation = {
-      model_id: CatalogBaseId.new(String(entry.modelId)),
-      variant_id: CatalogVariantId.new(String(entry.variantId)),
-      package_id: String(entry.packageId) as ModelPackageId,
-      repository: String(entry.repository),
-      role: role as CatalogPackageRole,
-    }
-    return validAffiliation(affiliation) ? affiliation : undefined
-  } catch {
-    return undefined
+  const base = catalogBaseId(String(entry.modelId))
+  const variant = catalogVariantId(String(entry.variantId))
+  if (base instanceof ModelIdError || variant instanceof ModelIdError) return undefined
+  const affiliation: CatalogPackageAffiliation = {
+    modelId: base,
+    variantId: variant,
+    packageId: modelPackageId(String(entry.packageId)),
+    repository: String(entry.repository),
+    role: role as CatalogPackageRole,
   }
+  return validAffiliation(affiliation) ? affiliation : undefined
 }
 
 const validRepository = (value: string): boolean => {
@@ -132,8 +133,8 @@ const validRepositoryComponent = (value: string): boolean =>
   value.length > 0 && value !== "." && value !== ".." && !value.includes("\\") && !value.includes("\0")
 
 export const validAffiliation = (affiliation: CatalogPackageAffiliation): boolean =>
-  validIdentityComponent(CatalogBaseId.asStr(affiliation.model_id)) &&
-  validVariantId(CatalogVariantId.asStr(affiliation.variant_id)) &&
-  affiliation.package_id.length > 0 &&
-  affiliation.package_id.trim() === affiliation.package_id &&
+  validIdentityComponent(affiliation.modelId) &&
+  validVariantId(affiliation.variantId) &&
+  affiliation.packageId.length > 0 &&
+  affiliation.packageId.trim() === affiliation.packageId &&
   validRepository(affiliation.repository)

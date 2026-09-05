@@ -1,21 +1,20 @@
+import { Option } from "effect"
 import { join } from "node:path"
 import {
   InventoryError,
   type EffectiveModel,
   type InstalledModelPackage,
   type ModelFailure,
-  type ModelFileRole,
   type ModelInstallationOwnership,
   type ModelPackage,
   type ModelPackageId,
-  type ModelPackageInstallationOrigin,
   type ModelServingConfiguration,
   type PackageValidation,
   type ReadyModel,
   type ResolvedModelInstallation,
   type ServableModelBundle,
   type ServingProfile,
-} from "./_contracts-shim"
+} from "@magnitudedev/icn-contracts"
 
 const MINIMUM_EXTERNAL_CONTEXT = 4_096
 
@@ -33,13 +32,13 @@ export const primaryModelPath = (installed: InstalledModelPackage): string => {
 export const resolvedInstallation = (
   installed: InstalledModelPackage,
 ): ResolvedModelInstallation => {
-  const installedBytes = installed.package.files.reduce((sum, file) => sum + file.size_bytes, 0)
+  const installedBytes = installed.package.files.reduce((sum, file) => sum + file.sizeBytes, 0)
   const ownership: ModelInstallationOwnership =
-    installed.origin === "magnitude" ? "Magnitude" : "ExternalHuggingFace"
+    installed.origin === "Magnitude" ? "Magnitude" : "ExternalHuggingFace"
   return {
     _tag: "Resolved",
-    installed_bytes: installedBytes,
-    primary_path: primaryModelPath(installed),
+    installedBytes,
+    primaryPath: primaryModelPath(installed),
     ownership,
   }
 }
@@ -65,26 +64,28 @@ export const bundlePackages = (bundle: ServableModelBundle): readonly ModelPacka
     case "Standalone":
       return [bundle.package]
     case "SpeculativeDecoding":
-      return bundle.draft_source._tag === "Embedded"
+      return bundle.draftSource._tag === "Embedded"
         ? [bundle.target]
-        : [bundle.target, bundle.draft_source.draft]
+        : [bundle.target, bundle.draftSource.draft]
   }
 }
 
 export const readyModel = (bundle: ServableModelBundle, profile: ServingProfile): ReadyModel => {
-  const package_ =
-    bundle._tag === "Standalone" ? bundle.package : bundle.target
+  const package_ = bundle._tag === "Standalone" ? bundle.package : bundle.target
   return {
     metadata: {
       format: package_.properties.format,
       architecture: package_.properties.architecture,
       quantization: package_.properties.quantization,
-      quantization_name: package_.properties.quantization_name,
-      storage_bytes: bundlePackages(bundle).flatMap((pkg) => pkg.files).reduce((sum, file) => sum + file.size_bytes, 0),
-      maximum_context_length: package_.properties.maximum_context_length ?? undefined,
+      quantizationName: package_.properties.quantizationName,
+      storageBytes: bundlePackages(bundle)
+        .flatMap((pkg) => pkg.files)
+        .reduce((sum, file) => sum + file.sizeBytes, 0),
+      maximumContextLength: package_.properties.maximumContextLength,
     },
     profile,
-    speculative_method: bundle._tag === "SpeculativeDecoding" ? bundle.method : undefined,
+    speculativeMethod:
+      bundle._tag === "SpeculativeDecoding" ? Option.some(bundle.method) : Option.none(),
   }
 }
 
@@ -124,7 +125,7 @@ export const effectiveConfigurationModel = (
       return { _tag: "Unavailable", failure }
     }
   }
-  if (configuration.profile.context_length < MINIMUM_EXTERNAL_CONTEXT) {
+  if (configuration.profile.contextLength < MINIMUM_EXTERNAL_CONTEXT) {
     return {
       _tag: "Unavailable",
       failure: {

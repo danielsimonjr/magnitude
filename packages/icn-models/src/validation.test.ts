@@ -1,19 +1,20 @@
+import { Option } from "effect"
 import { describe, expect, it } from "vitest"
-import { ModelFileId, ModelPackageId, type ModelPackage } from "./_contracts-shim"
+import { modelFileId, modelPackageId, type ModelPackage } from "@magnitudedev/icn-contracts"
 import { ValidatedDownloadPackage } from "./validation"
 
 const package_ = (path: string): ModelPackage => {
   const sha256 = "a".repeat(64)
   return {
-    id: ModelPackageId("package_test"),
+    id: modelPackageId("package_test"),
     source: { _tag: "HuggingFace", repository: "owner/repo", revision: "b".repeat(40) },
     files: [
       {
-        id: ModelFileId(`file_${sha256}`),
+        id: modelFileId(`file_${sha256}`),
         path,
         role: "weights",
-        size_bytes: 1,
-        tensor_storage_bytes: null,
+        sizeBytes: 1,
+        tensorStorageBytes: Option.none(),
         sha256,
       },
     ],
@@ -21,11 +22,11 @@ const package_ = (path: string): ModelPackage => {
     properties: {
       format: "gguf",
       quantization: "test",
-      quantization_name: "test",
+      quantizationName: "test",
       architecture: "test",
-      maximum_context_length: 1,
-      intrinsic_model_id: null,
-      intrinsic_quality_id: null,
+      maximumContextLength: Option.some(1),
+      intrinsicModelId: Option.none(),
+      intrinsicQualityId: Option.none(),
     },
   }
 }
@@ -45,7 +46,7 @@ describe("validation", () => {
         ...duplicateBase.files,
         {
           ...duplicateBase.files[0],
-          id: ModelFileId(`file_${"c".repeat(64)}`),
+          id: modelFileId(`file_${"c".repeat(64)}`),
           sha256: "c".repeat(64),
         },
       ],

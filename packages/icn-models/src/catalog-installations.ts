@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import {
   InventoryError,
   type CatalogInstallationAdmission,
@@ -11,7 +12,7 @@ import {
   type ModelDownloadId,
   type ModelId,
   type StartModelDownloadRequest,
-} from "./_contracts-shim"
+} from "@magnitudedev/icn-contracts"
 import type { ModelDomainResolver } from "./catalog-models"
 
 export interface ModelDownloadsService {
@@ -22,8 +23,8 @@ export interface ModelDownloadsService {
 }
 
 interface OperationBinding {
-  operation_id: CatalogInstallationOperationId
-  model_id: ModelId
+  operationId: CatalogInstallationOperationId
+  modelId: ModelId
   download_id: ModelDownloadId
 }
 
@@ -52,8 +53,8 @@ export class ManagedCatalogInstallations {
   async install(id: ModelId): Promise<CatalogInstallationAdmission> {
     return this.withMutation(async () => {
       const definition = this.resolver.catalogDefinition(id)
-      for (const binding of this.operations.filter((entry) => entry.model_id === id)) {
-        const operation = await this.operation(binding.operation_id)
+      for (const binding of this.operations.filter((entry) => entry.modelId === id)) {
+        const operation = await this.operation(binding.operationId)
         if (operation.state._tag === "Pending" || operation.state._tag === "Running") {
           throw InventoryError.ModelOperation({
             code: "catalog_installation_active",
@@ -71,19 +72,19 @@ export class ManagedCatalogInstallations {
       }
       const operationId = started.download.id as unknown as CatalogInstallationOperationId
       this.operations.push({
-        operation_id: operationId,
-        model_id: id,
+        operationId: operationId,
+        modelId: id,
         download_id: started.download.id,
       })
-      return { _tag: "Admitted", operation_id: operationId }
+      return { _tag: "Admitted", operationId: operationId }
     })
   }
 
   async remove(id: ModelId): Promise<CatalogInstallationRemoval> {
     return this.withMutation(async () => {
       this.resolver.catalogDefinition(id)
-      for (const binding of this.operations.filter((entry) => entry.model_id === id)) {
-        const operation = await this.operation(binding.operation_id)
+      for (const binding of this.operations.filter((entry) => entry.modelId === id)) {
+        const operation = await this.operation(binding.operationId)
         if (operation.state._tag === "Pending" || operation.state._tag === "Running") {
           throw InventoryError.ModelOperation({
             code: "catalog_installation_active",
@@ -107,7 +108,10 @@ export class ManagedCatalogInstallations {
         return { _tag: "Retained", reason: "SharedMaterial" }
       }
       const reclaimedBytes = await this.remover.removeCatalogPackages(plan.package_ids)
-      return { _tag: "Removed", reclaimed_bytes: reclaimedBytes }
+      if (typeof reclaimedBytes !== "number") {
+        throw reclaimedBytes
+      }
+      return { _tag: "Removed", reclaimedBytes }
     })
   }
 
@@ -118,10 +122,18 @@ export class ManagedCatalogInstallations {
     }
   }
 
+  async listCatalogInstallations(): Promise<{ operations: readonly CatalogInstallationOperation[] }> {
+    const operations: CatalogInstallationOperation[] = []
+    for (const binding of this.operations) {
+      operations.push(await this.operation(binding.operationId))
+    }
+    return { operations }
+  }
+
   private async operation(
     id: CatalogInstallationOperationId,
   ): Promise<CatalogInstallationOperation> {
-    const binding = this.operations.find((entry) => entry.operation_id === id)
+    const binding = this.operations.find((entry) => entry.operationId === id)
     if (binding === undefined) {
       throw InventoryError.NotFound({ id: String(id) })
     }
@@ -131,7 +143,7 @@ export class ManagedCatalogInstallations {
     if (download === undefined) {
       throw InventoryError.NotFound({ id: String(id) })
     }
-    return operationFromDownload(id, binding.model_id, download)
+    return operationFromDownload(id, binding.modelId, download)
   }
 }
 
@@ -144,50 +156,50 @@ const operationFromDownload = (
     stage: DownloadStage,
     completedBytes: number,
     totalBytes: number,
-    bytesPerSecond?: number,
-  ): CatalogInstallationProgress => ({
+  bytesPerSecond?: Option.Option<number>,
+): CatalogInstallationProgress => ({
     stage,
-    completed_bytes: completedBytes,
-    total_bytes: totalBytes,
-    bytes_per_second: bytesPerSecond,
+    completedBytes,
+    totalBytes,
+    bytesPerSecond: bytesPerSecond ?? Option.none(),
   })
 
   switch (download.state._tag) {
     case "Pending":
       return {
-        operation_id: operationId,
-        model_id: modelId,
+        operationId: operationId,
+        modelId: modelId,
         state: {
           _tag: "Pending",
-          progress: progress("queued", download.state.completed_bytes, download.state.total_bytes),
+          progress: progress("queued", download.state.completedBytes, download.state.totalBytes),
         },
       }
     case "Downloading":
       return {
-        operation_id: operationId,
-        model_id: modelId,
+        operationId: operationId,
+        modelId: modelId,
         state: {
           _tag: "Running",
           progress: progress(
             download.state.stage,
-            download.state.completed_bytes,
-            download.state.total_bytes,
-            download.state.bytes_per_second ?? undefined,
+            download.state.completedBytes,
+            download.state.totalBytes,
+            download.state.bytesPerSecond,
           ),
         },
       }
     case "Completed":
-      return { operation_id: operationId, model_id: modelId, state: { _tag: "Completed" } }
+      return { operationId: operationId, modelId: modelId, state: { _tag: "Completed" } }
     case "Failed":
       return {
-        operation_id: operationId,
-        model_id: modelId,
+        operationId: operationId,
+        modelId: modelId,
         state: {
           _tag: "Failed",
           progress: progress(
             "downloading",
-            download.state.completed_bytes,
-            download.state.total_bytes,
+            download.state.completedBytes,
+            download.state.totalBytes,
           ),
           failure: download.state.failure,
           acknowledged: download.state.acknowledged,
@@ -195,14 +207,14 @@ const operationFromDownload = (
       }
     case "Cancelled":
       return {
-        operation_id: operationId,
-        model_id: modelId,
+        operationId: operationId,
+        modelId: modelId,
         state: {
           _tag: "Cancelled",
           progress: progress(
             "queued",
-            download.state.completed_bytes,
-            download.state.total_bytes,
+            download.state.completedBytes,
+            download.state.totalBytes,
           ),
         },
       }

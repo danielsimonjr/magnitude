@@ -42,21 +42,21 @@ describe("catalog", () => {
 
   it("parameterization_requires_meaningful_architecture_counts", () => {
     expect(
-      validParameterization({ architecture: "dense", totalParameters: 8_000_000_000 }),
+      validParameterization({ architecture: "dense", totalParameters: 8_000_000_000n }),
     ).toBe(true)
-    expect(validParameterization({ architecture: "dense", totalParameters: 0 })).toBe(false)
+    expect(validParameterization({ architecture: "dense", totalParameters: 0n })).toBe(false)
     expect(
       validParameterization({
         architecture: "mixtureOfExperts",
-        totalParameters: 35_000_000_000,
-        activeParameters: 3_000_000_000,
+        totalParameters: 35_000_000_000n,
+        activeParameters: 3_000_000_000n,
       }),
     ).toBe(true)
     expect(
       validParameterization({
         architecture: "mixtureOfExperts",
-        totalParameters: 3_000_000_000,
-        activeParameters: 3_000_000_000,
+        totalParameters: 3_000_000_000n,
+        activeParameters: 3_000_000_000n,
       }),
     ).toBe(false)
   })

@@ -1,16 +1,18 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { chmodSync, lstatSync } from "node:fs"
+import { chmodSync } from "node:fs"
 import { sha256 } from "@noble/hashes/sha2.js"
 import { bytesToHex } from "@noble/hashes/utils.js"
 import {
-  type CachedModelAssessment,
+  modelAssessmentIsValidFor,
+  modelExecutionAssessmentHardware,
   type ContentId,
   type HardwareAssessment,
   type MemoryTopology,
   type ModelExecutionAssessment,
-} from "./_contracts-shim"
+} from "@magnitudedev/icn-contracts"
+import type { CachedModelAssessment } from "./models-types"
 import { readBytes, readJson, readObject, writeBytesAtomic, writeJsonAtomic } from "./file-cache"
 
 export type { CachedModelAssessment }
@@ -107,7 +109,9 @@ export class ModelCache {
     if (assessment === undefined) {
       return undefined
     }
-    return topology.validatesHardwareAssessment(assessment.hardware()) ? assessment : undefined
+    return topology.validatesHardwareAssessment(modelExecutionAssessmentHardware(assessment))
+      ? assessment
+      : undefined
   }
 
   writeExecutionAssessment(
@@ -115,7 +119,7 @@ export class ModelCache {
     executionEvidence: string,
     assessment: ModelExecutionAssessment,
   ): void {
-    if (isTerminalAssessment(assessment.hardware())) {
+    if (isTerminalAssessment(modelExecutionAssessmentHardware(assessment))) {
       this.writeIndex(
         "ExecutionAssessment",
         hardwareAssessmentEvidence(contentId, executionEvidence),
@@ -132,7 +136,7 @@ export class ModelCache {
     if (assessment === undefined) {
       return undefined
     }
-    return topology.isValidFor(assessment.profile) ? assessment : undefined
+    return modelAssessmentIsValidFor(assessment.profile, topology) ? assessment : undefined
   }
 
   writeModelAssessment(evidence: string, assessment: CachedModelAssessment): void {
@@ -225,10 +229,10 @@ const hardwareAssessmentEvidence = (contentId: ContentId, hardwareEvidence: stri
   `${contentId}:${hardwareEvidence}`
 
 const isTerminalAssessment = (assessment: HardwareAssessment): boolean =>
-  assessment._tag === "Fits" ||
-  assessment._tag === "DoesNotFit" ||
-  assessment._tag === "InvalidArtifact" ||
-  assessment._tag === "IncompatibleArtifact"
+  assessment.type === "fits" ||
+  assessment.type === "does_not_fit" ||
+  assessment.type === "invalid_artifact" ||
+  assessment.type === "incompatible_artifact"
 
 export const hexSha256 = (bytes: Uint8Array): string => bytesToHex(sha256(bytes))
 

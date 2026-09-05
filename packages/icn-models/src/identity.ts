@@ -1,42 +1,50 @@
+import { Option } from "effect"
 import { realpathSync } from "node:fs"
 import { sha256 } from "@noble/hashes/sha2.js"
 import { bytesToHex } from "@noble/hashes/utils.js"
-import type { ContentId, ContentIdentity, InventoryEntryId, ModelComponent } from "./_contracts-shim"
-import { ContentId as ContentIdBrand, InventoryEntryId as InventoryEntryIdBrand } from "./_contracts-shim"
+import {
+  contentIdentity,
+  makeContentId,
+  makeInventoryEntryId,
+  type ContentId,
+  type ContentIdentity,
+  type InventoryEntryId,
+  type ModelComponent,
+} from "@magnitudedev/icn-contracts"
 
 const roleLabel = (role: ModelComponent["role"]): string => {
   switch (role) {
-    case "Weights":
-      return "Weights"
-    case "Shard":
-      return "Shard"
-    case "Projector":
-      return "Projector"
-    case "Draft":
-      return "Draft"
-    case "Mtp":
-      return "Mtp"
-    case "Auxiliary":
-      return "Auxiliary"
+    case "weights":
+      return "weights"
+    case "shard":
+      return "shard"
+    case "projector":
+      return "projector"
+    case "draft":
+      return "draft"
+    case "mtp":
+      return "mtp"
+    case "auxiliary":
+      return "auxiliary"
   }
 }
 
 const contentIdentityBytes = (content: ContentIdentity): Uint8Array => {
   const parts: Uint8Array[] = []
-  switch (content._tag) {
-    case "Sha256":
+  switch (content.type) {
+    case "sha256":
       parts.push(new TextEncoder().encode("sha256\0"), new TextEncoder().encode(content.value))
       break
-    case "GitOid":
+    case "git_oid":
       parts.push(new TextEncoder().encode("git-oid\0"), new TextEncoder().encode(content.value))
       break
-    case "Xet":
+    case "xet":
       parts.push(new TextEncoder().encode("xet\0"), new TextEncoder().encode(content.value))
       break
-    case "FileIdentity":
+    case "file_identity":
       parts.push(new TextEncoder().encode("file-identity\0"), new TextEncoder().encode(content.value))
       break
-    case "Unknown":
+    case "unknown":
       parts.push(new TextEncoder().encode("unknown"))
       break
   }
@@ -53,7 +61,7 @@ const contentIdentityBytes = (content: ContentIdentity): Uint8Array => {
 export const inventoryEntryId = (
   sourceKind: string,
   sourceLocation: string,
-  contentId: ContentId,
+  contentIdValue: ContentId,
 ): InventoryEntryId => {
   let canonical = sourceLocation
   try {
@@ -67,8 +75,8 @@ export const inventoryEntryId = (
   digest.update(new Uint8Array([0]))
   digest.update(new TextEncoder().encode(canonical))
   digest.update(new Uint8Array([0]))
-  digest.update(new TextEncoder().encode(contentId))
-  return InventoryEntryIdBrand.make(`mdl_${bytesToHex(digest.digest())}`)
+  digest.update(new TextEncoder().encode(contentIdValue))
+  return makeInventoryEntryId(`mdl_${bytesToHex(digest.digest())}`)
 }
 
 export const contentId = (components: readonly ModelComponent[]): ContentId => {
@@ -81,17 +89,18 @@ export const contentId = (components: readonly ModelComponent[]): ContentId => {
     digest.update(new TextEncoder().encode(roleLabel(component.role)))
     digest.update(new Uint8Array([0]))
     const size = new Uint8Array(8)
-    new DataView(size.buffer).setBigUint64(0, BigInt(component.size_bytes), true)
+    new DataView(size.buffer).setBigUint64(0, component.size_bytes, true)
     digest.update(size)
     digest.update(new Uint8Array([0]))
     digest.update(contentIdentityBytes(component.content))
     digest.update(new Uint8Array([0]))
+    const shardIndex = Option.isSome(component.shard_index) ? component.shard_index.value : 0xffffffff
     const shard = new Uint8Array(4)
-    new DataView(shard.buffer).setUint32(0, component.shard_index ?? 0xffffffff, true)
+    new DataView(shard.buffer).setUint32(0, shardIndex, true)
     digest.update(shard)
     digest.update(new Uint8Array([0]))
   }
-  return ContentIdBrand.make(`content_${bytesToHex(digest.digest())}`)
+  return makeContentId(`content_${bytesToHex(digest.digest())}`)
 }
 
 export const fingerprint = (bytes: Uint8Array): string => `sha256:${bytesToHex(sha256(bytes))}`

@@ -1,16 +1,17 @@
+import { Option } from "effect"
 import { basename } from "node:path"
 import {
-  ComponentRelationship,
-  ComponentRole,
-  ContentIdentity,
+  contentIdentity,
   InventoryError,
+  type ComponentRelationship,
+  type ComponentRole,
   type ModelComponent,
   type ModelFile,
   type ModelFileId,
   type ModelFileRelationship,
   type ModelFileRole,
   type ModelPackage,
-} from "./_contracts-shim"
+} from "@magnitudedev/icn-contracts"
 
 const MAX_COMPONENTS = 128
 const MAX_PATH_BYTES = 1_024
@@ -31,35 +32,31 @@ export class ValidatedDownloadPackage {
   static new(package_: ModelPackage): ValidatedDownloadPackage {
     validateDownloadPackage(package_)
     const components = package_.files.map((file) => {
-      const shardIndex = package_.relationships.find((relationship) => {
-        if (relationship._tag === "Shard" && relationship.file_id === file.id) {
-          return true
-        }
-        return false
-      })
-      const shard_index =
-        shardIndex?._tag === "Shard" ? shardIndex.index : undefined
+      const shardIndex = package_.relationships.find(
+        (relationship) => relationship._tag === "Shard" && relationship.fileId === file.id,
+      )
+      const shardIndexValue = shardIndex?._tag === "Shard" ? shardIndex.index : undefined
       const role: ComponentRole = (() => {
         switch (file.role) {
           case "weights":
-            return shard_index !== undefined ? "Shard" : "Weights"
+            return shardIndexValue !== undefined ? "shard" : "weights"
           case "projector":
-            return "Projector"
+            return "projector"
           case "draft":
-            return "Draft"
+            return "draft"
           case "mtp":
-            return "Mtp"
+            return "mtp"
           case "auxiliary":
-            return "Auxiliary"
+            return "auxiliary"
         }
       })()
       return {
         path: file.path,
         role,
-        size_bytes: file.size_bytes,
-        content: ContentIdentity.Sha256(file.sha256.toLowerCase()),
-        shard_index,
-        relationship: componentRelationship(package_, file),
+        size_bytes: BigInt(file.sizeBytes),
+        content: contentIdentity.sha256(file.sha256.toLowerCase()),
+        shard_index: shardIndexValue !== undefined ? Option.some(shardIndexValue) : Option.none(),
+        relationship: Option.fromNullable(componentRelationship(package_, file)),
       }
     })
     if (package_.source._tag !== "HuggingFace") {
@@ -99,29 +96,29 @@ const componentRelationship = (
   for (const relationship of package_.relationships) {
     switch (relationship._tag) {
       case "ProjectorFor":
-        if (relationship.projector_file_id === file.id) {
+        if (relationship.projectorFileId === file.id) {
           return {
-            _tag: "ProjectorFor",
+            type: "projector_for",
             projector: file.path,
-            model: pathFor(relationship.weights_file_id),
+            model: pathFor(relationship.weightsFileId),
           }
         }
         break
       case "MtpFor":
-        if (relationship.mtp_file_id === file.id) {
+        if (relationship.mtpFileId === file.id) {
           return {
-            _tag: "MtpFor",
+            type: "mtp_for",
             mtp: file.path,
-            model: pathFor(relationship.weights_file_id),
+            model: pathFor(relationship.weightsFileId),
           }
         }
         break
       case "DraftFor":
-        if (relationship.draft_file_id === file.id) {
+        if (relationship.draftFileId === file.id) {
           return {
-            _tag: "DraftFor",
+            type: "draft_for",
             draft: file.path,
-            model: pathFor(relationship.weights_file_id),
+            model: pathFor(relationship.weightsFileId),
             method: relationship.method,
           }
         }
@@ -184,7 +181,7 @@ const validateDownloadPackage = (package_: ModelPackage): void => {
   for (const relationship of package_.relationships) {
     switch (relationship._tag) {
       case "Shard": {
-        requireRole(filesById, relationship.file_id, "weights", "shard")
+        requireRole(filesById, relationship.fileId, "weights", "shard")
         if (shardIndices.has(relationship.index)) {
           throw InventoryError.InvalidRequest({
             message: `duplicate shard index: ${relationship.index}`,
@@ -194,16 +191,16 @@ const validateDownloadPackage = (package_: ModelPackage): void => {
         break
       }
       case "ProjectorFor":
-        requireRole(filesById, relationship.projector_file_id, "projector", "projector")
-        requireRole(filesById, relationship.weights_file_id, "weights", "projector target")
+        requireRole(filesById, relationship.projectorFileId, "projector", "projector")
+        requireRole(filesById, relationship.weightsFileId, "weights", "projector target")
         break
       case "MtpFor":
-        requireRole(filesById, relationship.mtp_file_id, "mtp", "MTP")
-        requireRole(filesById, relationship.weights_file_id, "weights", "MTP target")
+        requireRole(filesById, relationship.mtpFileId, "mtp", "MTP")
+        requireRole(filesById, relationship.weightsFileId, "weights", "MTP target")
         break
       case "DraftFor":
-        requireRole(filesById, relationship.draft_file_id, "draft", "draft")
-        requireRole(filesById, relationship.weights_file_id, "weights", "draft target")
+        requireRole(filesById, relationship.draftFileId, "draft", "draft")
+        requireRole(filesById, relationship.weightsFileId, "weights", "draft target")
         break
     }
   }
@@ -236,7 +233,7 @@ export const validateRelativePath = (path: string): void => {
   }
   const segments = path.split(/[/\\]/)
   for (const segment of segments) {
-    if (segment === ".." || segment === "" && path.startsWith("/")) {
+    if (segment === ".." || (segment === "" && path.startsWith("/"))) {
       throw InventoryError.InvalidRequest({ message: `unsafe component path: ${path}` })
     }
   }

@@ -5,6 +5,7 @@ import { probeBackendEligibility } from "./backend-eligibility.js"
 import { binaryIdentity } from "./build-identity.js"
 import { resolveAuthToken, type ServeConfig } from "./config.js"
 import { startServer } from "./server.js"
+import { runInferenceWorkerProcess } from "./worker/runner.js"
 
 const encodeIdentity = Schema.encodeSync(Schema.parseJson(IcnBinaryIdentity))
 const encodeEligibility = Schema.encodeSync(Schema.parseJson(BackendEligibilityReport))
@@ -65,6 +66,7 @@ export const runCli = async (argv: ReadonlyArray<string>): Promise<number> => {
       "hf-cache": { type: "string", multiple: true },
       installation: { type: "string" },
       json: { type: "boolean" },
+      "local-engine": { type: "boolean" },
     },
   })
 
@@ -105,9 +107,13 @@ export const runCli = async (argv: ReadonlyArray<string>): Promise<number> => {
       return 0
     }
     case "planning-worker":
-    case "inference-worker":
-      console.error(`${command} is not implemented in the TypeScript ICN server yet`)
+      console.error("planning-worker is not implemented in the TypeScript ICN server yet")
       return 2
+    case "inference-worker":
+      return runInferenceWorkerProcess({
+        fake: values.fake === true,
+        localEngine: values["local-engine"] === true,
+      })
     default:
       console.error(`unknown command: ${command}`)
       return 2

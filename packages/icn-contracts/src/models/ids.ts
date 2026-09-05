@@ -18,15 +18,19 @@ const validateNormalizedComponent = (value: string, label: string): ModelIdError
 
 export const ModelFileId = transparentStringId("ModelFileId")
 export type ModelFileId = typeof ModelFileId.Type
+export const modelFileId = (value: string): ModelFileId => value as ModelFileId
 
 export const ModelPackageId = transparentStringId("ModelPackageId")
 export type ModelPackageId = typeof ModelPackageId.Type
+export const modelPackageId = (value: string): ModelPackageId => value as ModelPackageId
 
 export const ModelDownloadId = transparentStringId("ModelDownloadId")
 export type ModelDownloadId = typeof ModelDownloadId.Type
+export const modelDownloadId = (value: string): ModelDownloadId => value as ModelDownloadId
 
 export const ModelAssessmentId = transparentStringId("ModelAssessmentId")
 export type ModelAssessmentId = typeof ModelAssessmentId.Type
+export const modelAssessmentId = (value: string): ModelAssessmentId => value as ModelAssessmentId
 
 export const AssessmentEnvironmentId = transparentStringId("AssessmentEnvironmentId")
 export type AssessmentEnvironmentId = typeof AssessmentEnvironmentId.Type

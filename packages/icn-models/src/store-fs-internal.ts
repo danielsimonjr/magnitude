@@ -1,6 +1,6 @@
 import { mkdirSync, renameSync } from "node:fs"
 import { lstatSync } from "node:fs"
-import type { InventoryError } from "./_contracts-shim"
+import type { InventoryError } from "@magnitudedev/icn-contracts"
 
 export interface OwnedDirectoryDeps {
   quarantine: (path: string) => void

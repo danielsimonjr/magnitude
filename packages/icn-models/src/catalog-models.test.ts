@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { type ModelPackageId } from "./_contracts-shim"
+import { modelPackageId, type ModelPackageId } from "@magnitudedev/icn-contracts"
 import {
   catalogModel,
   catalogResolution,
@@ -13,9 +13,9 @@ import { resolvedInstallation } from "./model-projection"
 
 describe("catalog-models", () => {
   it("removal_retains_protected_dependencies_without_blocking_a_managed_target", () => {
-    const target = "target" as ModelPackageId
-    const externalDependency = "external-dependency" as ModelPackageId
-    const sharedDependency = "shared-dependency" as ModelPackageId
+    const target = modelPackageId("target") 
+    const externalDependency = modelPackageId("external-dependency") 
+    const sharedDependency = modelPackageId("shared-dependency") 
     const ids = new Set([target, externalDependency, sharedDependency])
     const plan = removalPlan(
       ids,
@@ -32,7 +32,7 @@ describe("catalog-models", () => {
   it("catalog_resolution_with_no_installed_target_is_not_installed", () => {
     const definition = testDefinition({
       _tag: "Standalone",
-      package: testPackage("target", 20),
+      package: testPackage(modelPackageId("target"), 20),
     })
     const resolution = catalogResolution(definition, new Map(), [])
     expect(resolution.state._tag).toBe("NotInstalled")
@@ -48,41 +48,40 @@ describe("catalog-models", () => {
       [testAffiliation(prior.package.id, "Target")],
       new Map(),
     )
-    expect(model.local_state._tag).toBe("Installed")
-    if (model.local_state._tag === "Installed") {
-      expect(model.local_state.effective._tag).toBe("Ready")
-      expect(model.local_state.update_state).toEqual({
+    expect(model.localState._tag).toBe("Installed")
+    if (model.localState._tag === "Installed") {
+      expect(model.localState.effective._tag).toBe("Ready")
+      expect(model.localState.updateState).toEqual({
         _tag: "Available",
-        required_download_bytes: 20,
+        requiredDownloadBytes: 20,
       })
     }
   })
 
   it("desired_target_falls_back_to_standalone_until_separate_draft_is_installed", () => {
-    const targetPackage = testPackage("target", 20)
+    const targetPackage = testPackage(modelPackageId("target"), 20)
     const draftPackage = testPackage("draft", 5)
     const target = testInstalled(targetPackage)
     const definition = testDefinition({
       _tag: "SpeculativeDecoding",
       target: targetPackage,
-      draft_source: { _tag: "Separate", draft: draftPackage },
-      method: "dflash",
+      draftSource: { _tag: "Separate", draft: draftPackage },
+      method: { _tag: "DFlash" },
     })
     const resolution = catalogResolution(definition, new Map([[target.package.id, target]]), [])
     expect(resolution.state._tag).toBe("Installed")
     if (resolution.state._tag === "Installed") {
       expect(resolution.state.configuration?.bundle._tag).toBe("Standalone")
-      expect(resolution.required_download_bytes).toBe(5)
+      expect(resolution.requiredDownloadBytes).toBe(5)
     }
   })
 
   it("resolved_installation_points_to_the_primary_model_file", () => {
-    const installed = testInstalled(testPackage("model", 20), "hugging_face_cache")
-    installed.path = "/tmp/model"
-    const resolved = resolvedInstallation(installed)
+    const installed = testInstalled(testPackage(modelPackageId("model"), 20), "HuggingFaceCache")
+    const resolved = resolvedInstallation({ ...installed, path: "/tmp/model" })
     expect(resolved._tag).toBe("Resolved")
     if (resolved._tag === "Resolved") {
-      expect(resolved.primary_path).toBe("/tmp/model/model.gguf")
+      expect(resolved.primaryPath).toBe("/tmp/model/model.gguf")
     }
   })
 })

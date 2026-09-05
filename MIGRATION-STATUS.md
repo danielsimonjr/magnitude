@@ -6,9 +6,9 @@ Tracks the TypeScript-on-Bun migration of the inference engine described in
 | Phase | Status | Notes |
 |---|---|---|
 | 1. Native slice (`packages/icn-native`) | Done | Loads GGUF, tokenizes, greedy decode, streams text; 16 tests; verified on CPU with a synthetic model |
-| 2. Contracts and store | In progress | `icn-contracts` (37 tests) + `icn-models` store/catalog/discovery (46 tests); models still uses `_contracts-shim` pending import cutover; HF network paths mocked |
-| 3. Engine | In progress | `packages/icn-engine` scheduler, sequence pool, KV reuse, sampling config, reasoning resolution (28 CPU tests); native FFI stubs for sampling, speculative, multimodal, worker isolation |
-| 4. HTTP and lifecycle | In progress | `packages/icn-server` (bootstrap, Bun HTTP, auth, fake completions, worker/memory stubs, CLI) + `packages/icn-hardware` memory policy (6 CPU tests); catalog/instance/HF routes stubbed; ACN lifecycle integration pending |
+| 2. Contracts and store | In progress | `icn-contracts` (37 tests) + `icn-models` on real `@magnitudedev/icn-contracts` imports (51 tests, `ManagedModelDownloads` + digest-verified resumable downloads with mocked HTTP); HF network paths mocked |
+| 3. Engine | In progress | `packages/icn-engine` scheduler, sequence pool, KV reuse, sampling config, reasoning resolution (33 CPU tests, 3 GGUF-gated); greedy native sampling + `createInProcessInferenceSession` / `spawnInferenceWorker` with MessageChannel token streams wired; speculative/multimodal remain stubbed |
+| 4. HTTP and lifecycle | In progress | `packages/icn-server` (bootstrap, Bun HTTP, auth, fake completions, catalog/discovery/installations/instances routes via `icn-models`, worker IPC with `--fake`/`--local-engine`, memory supervisor, CLI) + `packages/icn-hardware` memory policy, CPU-side capacity summary, memory-domain snapshot building, calibration record validation, and typed GPU probe stubs (19 CPU tests); inference/chat/responses/HF/install routes still 501; ACN lifecycle integration pending |
 | 5. Release cutover | Scaffolded | `packages/release/scripts/build/icn-typescript.ts` compiles TS ICN to `bin/magnitude-inference-ts`; default host build still uses Rust. Needs release runners + one stable TS ship before Rust removal |
 
 ## Test totals (this branch)
@@ -16,15 +16,16 @@ Tracks the TypeScript-on-Bun migration of the inference engine described in
 | Package | Tests |
 |---|---|
 | `@magnitudedev/icn-contracts` | 37 |
-| `@magnitudedev/icn-models` | 46 |
-| `@magnitudedev/icn-engine` | 28 |
-| `@magnitudedev/icn-hardware` | 6 |
-| `@magnitudedev/icn-server` | 12 |
-| **Total new** | **129** |
+| `@magnitudedev/icn-models` | 51 |
+| `@magnitudedev/icn-engine` | 33 (+3 GGUF-gated) |
+| `@magnitudedev/icn-hardware` | 19 |
+| `@magnitudedev/icn-server` | 20 |
+| **Total new** | **160** |
 
 ## Open items requiring hardware
 
-- Metal, CUDA, Vulkan backend loading from Bun; memory-domain accounting.
+- Native llama.cpp device discovery, bounded synthetic calibration measurement, and generation-performance estimation.
+- Metal, CUDA, Vulkan backend loading from Bun; live GPU memory probes beyond typed absent stubs.
 - Throughput parity on reference hardware.
 - Production-model behavior: chat templates, grammars, speculative decoding, multimodal.
 - Windows worker supervision; first Windows release build.
@@ -32,12 +33,10 @@ Tracks the TypeScript-on-Bun migration of the inference engine described in
 
 ## Open items (CPU-verifiable, unfinished)
 
-- Wire `icn-models` to `@magnitudedev/icn-contracts` and delete `_contracts-shim`.
-- Complete HF-backed catalog refresh, release catalog materialization, and `ManagedModelDownloads`.
-- Connect engine sampling/chat-template paths to `@magnitudedev/icn-native` and add CPU token-for-token parity harness.
-- Implement Bun Worker FFI owner (`spawnInferenceWorker`) with MessageChannel token streams.
-- Port remaining OpenAPI management routes, real worker IPC, and ACN integration suite against the TS engine.
-- Expand `packages/icn-hardware` calibration/capacity summary beyond memory thresholds.
+- Complete HF-backed catalog refresh and release catalog materialization.
+- Connect engine sampling/chat-template paths to `@magnitudedev/icn-native` and add CPU token-for-token parity harness (greedy generation + worker protocol landed; full sampler chain and chat templates remain).
+- Port remaining OpenAPI management routes (install/remove/HF/chat templates/responses), real GGUF worker subprocess, and ACN integration suite against the TS engine. TS server exposes length-prefixed JSON worker IPC (`--fake` / `--local-engine`) aligned with Rust framing.
+- Wire `packages/icn-server` hardware routes to `packages/icn-hardware` snapshot/calibration helpers and native backend discovery when Bun backends land.
 - Switch `buildHostArtifacts` from Rust `buildIcnBinary` to `buildTypescriptIcnBinary` after one stable TS release; then remove the Rust workspace.
 
 ## Decisions pending

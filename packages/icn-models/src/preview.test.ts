@@ -55,17 +55,17 @@ describe("preview", () => {
       {
         path: "model-00001-of-00002.gguf",
         size_bytes: 10,
-        content: { _tag: "Sha256" as const, value: "b".repeat(64) },
+        content: { type: "sha256" as const, value: "b".repeat(64) },
       },
       {
         path: "model-00002-of-00002.gguf",
         size_bytes: 20,
-        content: { _tag: "Sha256" as const, value: "c".repeat(64) },
+        content: { type: "sha256" as const, value: "c".repeat(64) },
       },
     ]
     const selected = selectRepositorySnapshotComponents(files, source)
     expect(selected).toHaveLength(2)
-    expect(selected[0]?.role).toBe("Weights")
+    expect(selected[0]?.role).toBe("weights")
     expect(selected[0]?.shard_index).toBe(1)
     expect(selected[1]?.shard_index).toBe(2)
   })
@@ -93,6 +93,6 @@ describe("preview hub snapshot parsing", () => {
       "b".repeat(40),
     )
     expect(snapshot.gguf_files).toHaveLength(1)
-    expect(snapshot.gguf_files[0]?.size_bytes).toBe(123)
+    expect(snapshot.gguf_files[0]?.size_bytes).toBe(123n)
   })
 })
