@@ -18,6 +18,7 @@ import {
   ManagedModelDownloads,
   ManagedModelStore,
   ModelDomainResolver,
+  createManagedStoreCatalogPackageRemover,
   type InstalledPackageSnapshot,
 } from "@magnitudedev/icn-models"
 import { developmentRecommendableCatalog } from "./catalog-development.js"
@@ -67,6 +68,8 @@ class InMemoryInventory implements InventoryPort {
   revision(): number {
     return this.generation
   }
+
+  async ensureModelInventory(): Promise<void> {}
 }
 
 const wireCatalogModels = (snapshot: {
@@ -107,7 +110,16 @@ export const createServerServices = (options: ServerServicesOptions = {}): Serve
   const catalogModels = new ManagedCatalogModels(resolver)
   const discovered = new ManagedDiscoveredModels({
     revision: () => inventory.revision(),
-    snapshot: () => inventory.snapshot(),
+    installedPackageSnapshot: () => inventory.snapshot(),
+    installedPackagesResponse: () => ({
+      revision: inventory.revision(),
+      reconciliationComplete: inventory.installedPackagesResponse().reconciliationComplete,
+    }),
+    ensureModelInventory: async () => {
+      if ("ensureModelInventory" in inventory && typeof inventory.ensureModelInventory === "function") {
+        await inventory.ensureModelInventory()
+      }
+    },
   })
   const installations =
     options.installations ??
@@ -160,7 +172,7 @@ export const createServerServicesFromConfig = async (
     installations: new ManagedCatalogInstallations(
       resolver,
       ManagedModelDownloads.open(store),
-      emptyRemover,
+      createManagedStoreCatalogPackageRemover(store),
     ),
   })
 }

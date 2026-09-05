@@ -130,13 +130,36 @@ export class ManagedCatalogInstallations {
     return { operations }
   }
 
-  private async operation(
+  async get(id: CatalogInstallationOperationId): Promise<CatalogInstallationOperation> {
+    return this.operation(id)
+  }
+
+  async cancel(id: CatalogInstallationOperationId): Promise<CatalogInstallationOperation> {
+    const binding = this.binding(id)
+    const download = await this.downloads.cancel(binding.download_id)
+    return operationFromDownload(id, binding.modelId, download)
+  }
+
+  async acknowledgeFailure(
     id: CatalogInstallationOperationId,
   ): Promise<CatalogInstallationOperation> {
+    const binding = this.binding(id)
+    const download = await this.downloads.acknowledgeFailure(binding.download_id)
+    return operationFromDownload(id, binding.modelId, download)
+  }
+
+  private binding(id: CatalogInstallationOperationId): OperationBinding {
     const binding = this.operations.find((entry) => entry.operationId === id)
     if (binding === undefined) {
       throw InventoryError.NotFound({ id: String(id) })
     }
+    return binding
+  }
+
+  private async operation(
+    id: CatalogInstallationOperationId,
+  ): Promise<CatalogInstallationOperation> {
+    const binding = this.binding(id)
     const download = (await this.downloads.list()).downloads.find(
       (entry) => entry.id === binding.download_id,
     )
