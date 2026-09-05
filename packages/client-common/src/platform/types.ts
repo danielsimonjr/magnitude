@@ -39,7 +39,7 @@ export interface Dialogs {
 export interface TerminalCapabilities {
   readonly width: number
   readonly height: number
-  /** process.platform — used for WindowsWarningScreen gate */
+  /** process.platform (e.g. "darwin", "linux", "win32") */
   readonly os?: string
   readonly onResize: (cb: () => void) => () => void
   readonly getPalette?: () => Promise<{ defaultBackground?: string } | null>

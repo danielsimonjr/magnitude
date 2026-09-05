@@ -29,6 +29,7 @@ import { mkdirSync, readFileSync, rmSync } from 'fs'
 import * as path from 'path'
 import { logger } from '@magnitudedev/logger'
 import { discoverDescendants } from './ps-tree'
+import { resolvePosixShell, type PosixShell } from '@magnitudedev/utils'
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -185,13 +186,13 @@ function consumeStreamToFileAndQueue(
  * instead of the process crashing.
  */
 function spawnDetachedShell(
-  shellPath: string,
+  shell: PosixShell,
   command: string,
   cwd: string,
   env: Record<string, string | undefined>,
 ): ReadableSubprocess {
   return Bun.spawn({
-    cmd: [shellPath, '-c', command],
+    cmd: [shell.path, ...shell.args, command],
     cwd,
     env,
     stdin: 'ignore',
@@ -361,9 +362,22 @@ export const makeDetachedShellRegistryService: Effect.Effect<DetachedShellRegist
         // Bun.spawn throws synchronously if the shell is missing. The
         // outer Effect.catchAllCause below catches it and surfaces the
         // error to the LLM as a Completed result with exitCode 1.
-        const shellPath = process.env.SHELL ?? '/bin/sh'
+        // On Windows this locates Git Bash — the shell-safety classifier is
+        // POSIX-only, so commands never run through cmd.exe/PowerShell. If no
+        // POSIX shell exists we report a failed result instead of crashing.
+        const shell = resolvePosixShell()
+        if (!shell.ok) {
+          const failed = yield* Deferred.make<ExecuteDetachedOutput, never>()
+          yield* Deferred.succeed(failed, {
+            _tag: 'Completed' as const,
+            stdout: '',
+            stderr: shell.message,
+            exitCode: 1,
+          })
+          return { result: failed, outputStream: Stream.empty }
+        }
         const child = spawnDetachedShell(
-          shellPath,
+          shell.shell,
           params.command,
           params.cwd,
           params.agentEnv,

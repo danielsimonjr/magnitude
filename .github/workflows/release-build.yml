@@ -88,6 +88,35 @@ jobs:
           sudo apt-get install -y clang
           echo "CC=clang" >> "$GITHUB_ENV"
           echo "CXX=clang++" >> "$GITHUB_ENV"
+      - name: Configure Windows MSVC build environment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Export the x64 MSVC developer environment (cl.exe, INCLUDE, LIB) so cmake, Ninja,
+          # bindgen, and nvcc find the toolset from the plain runner shell.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installation = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $installation) { throw "No Visual Studio installation provides the MSVC x64 toolset" }
+          $before = $env:Path -split ';'
+          Import-Module (Join-Path $installation "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
+          Enter-VsDevShell -VsInstallPath $installation -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+          if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) { throw "MSVC developer environment did not expose cl.exe" }
+          foreach ($entry in ($env:Path -split ';')) {
+            if ($entry -and ($before -notcontains $entry)) { $entry >> $env:GITHUB_PATH }
+          }
+          foreach ($name in @("INCLUDE", "LIB", "LIBPATH", "VCINSTALLDIR", "VCToolsInstallDir", "WindowsSdkDir", "WindowsSDKVersion", "UCRTVersion", "VSCMD_ARG_TGT_ARCH", "VSCMD_ARG_HOST_ARCH")) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if ($value) { "$name=$value" >> $env:GITHUB_ENV }
+          }
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja --no-progress -y }
+          ninja --version
+          cmake --version
+          "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
+          if (-not $env:LIBCLANG_PATH) {
+            $libclang = "${env:ProgramFiles}\LLVM\bin"
+            if (-not (Test-Path (Join-Path $libclang "libclang.dll"))) { throw "libclang.dll is required by bindgen and was not found in $libclang" }
+            "LIBCLANG_PATH=$libclang" >> $env:GITHUB_ENV
+          }
       - run: bun install --frozen-lockfile
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -126,6 +155,35 @@ jobs:
           sudo apt-get install -y clang
           echo "CC=clang" >> "$GITHUB_ENV"
           echo "CXX=clang++" >> "$GITHUB_ENV"
+      - name: Configure Windows MSVC build environment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Export the x64 MSVC developer environment (cl.exe, INCLUDE, LIB) so cmake, Ninja,
+          # bindgen, and nvcc find the toolset from the plain runner shell.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installation = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $installation) { throw "No Visual Studio installation provides the MSVC x64 toolset" }
+          $before = $env:Path -split ';'
+          Import-Module (Join-Path $installation "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
+          Enter-VsDevShell -VsInstallPath $installation -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+          if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) { throw "MSVC developer environment did not expose cl.exe" }
+          foreach ($entry in ($env:Path -split ';')) {
+            if ($entry -and ($before -notcontains $entry)) { $entry >> $env:GITHUB_PATH }
+          }
+          foreach ($name in @("INCLUDE", "LIB", "LIBPATH", "VCINSTALLDIR", "VCToolsInstallDir", "WindowsSdkDir", "WindowsSDKVersion", "UCRTVersion", "VSCMD_ARG_TGT_ARCH", "VSCMD_ARG_HOST_ARCH")) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if ($value) { "$name=$value" >> $env:GITHUB_ENV }
+          }
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja --no-progress -y }
+          ninja --version
+          cmake --version
+          "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
+          if (-not $env:LIBCLANG_PATH) {
+            $libclang = "${env:ProgramFiles}\LLVM\bin"
+            if (-not (Test-Path (Join-Path $libclang "libclang.dll"))) { throw "libclang.dll is required by bindgen and was not found in $libclang" }
+            "LIBCLANG_PATH=$libclang" >> $env:GITHUB_ENV
+          }
       - name: Install Linux Vulkan tools
         if: runner.os == 'Linux' && matrix.backend == 'vulkan'
         shell: bash
@@ -168,12 +226,6 @@ jobs:
           if (-not $sdk) { throw "Vulkan SDK installation did not publish VULKAN_SDK" }
           "VULKAN_SDK=$sdk" >> $env:GITHUB_ENV
           "$sdk\Bin" >> $env:GITHUB_PATH
-      - name: Use Ninja for Windows backend build
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          ninja --version
-          "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
       - name: Install Linux CUDA toolkit
         if: runner.os == 'Linux' && matrix.backend == 'cuda'
         shell: bash
@@ -217,6 +269,17 @@ jobs:
         with:
           cuda: "${{ matrix.toolkit }}.0"
           method: network
+      - name: Verify Windows CUDA toolkit
+        if: runner.os == 'Windows' && matrix.backend == 'cuda'
+        shell: pwsh
+        run: |
+          if (-not $env:CUDA_PATH) { throw "CUDA toolkit installation did not publish CUDA_PATH" }
+          foreach ($file in @("bin\nvcc.exe", "bin\cuobjdump.exe", "include\cublas_v2.h")) {
+            if (-not (Test-Path (Join-Path $env:CUDA_PATH $file))) { throw "CUDA toolkit is missing $file" }
+          }
+          $identity = & (Join-Path $env:CUDA_PATH "bin\nvcc.exe") --version
+          if (-not ($identity -match "release ${{ matrix.toolkit }}")) { throw "nvcc does not report CUDA ${{ matrix.toolkit }}: $identity" }
+          "$env:CUDA_PATH\bin" >> $env:GITHUB_PATH
       - run: bun install --frozen-lockfile
       - run: bun run packages/release/scripts/build/backend.ts "${{ matrix.id }}" "release/${{ matrix.id }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

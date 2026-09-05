@@ -83,46 +83,86 @@ export const releaseHosts = [
     executableExtension: "",
     cargoFeatures: ["mtmd", "dynamic-backends"],
   },
+  {
+    id: "windows-x64-msvc",
+    runner: "windows-2022",
+    bunTarget: "bun-windows-x64",
+    rustTarget: "x86_64-pc-windows-msvc",
+    executableExtension: ".exe",
+    cargoFeatures: ["mtmd", "dynamic-backends"],
+  },
 ] as const satisfies readonly ReleaseHost[]
+
+type CudaPlatform = "linux" | "windows"
 
 const cudaBuilds = [
   {
     toolkitVersion: "11.8",
     architectures: ["80-virtual"],
-    runtimeLibraries: ["libcudart.so.11.0", "libcublas.so.11", "libcublasLt.so.11"],
+    runtimeLibraries: {
+      linux: ["libcudart.so.11.0", "libcublas.so.11", "libcublasLt.so.11"],
+      windows: ["cudart64_110.dll", "cublas64_11.dll", "cublasLt64_11.dll"],
+    },
   },
   {
     toolkitVersion: "12.9",
     architectures: ["80-virtual", "90-virtual", "120-virtual"],
-    runtimeLibraries: ["libcudart.so.12", "libcublas.so.12", "libcublasLt.so.12"],
+    runtimeLibraries: {
+      linux: ["libcudart.so.12", "libcublas.so.12", "libcublasLt.so.12"],
+      windows: ["cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll"],
+    },
   },
-] as const
+] as const satisfies readonly {
+  readonly toolkitVersion: string
+  readonly architectures: readonly string[]
+  readonly runtimeLibraries: Readonly<Record<CudaPlatform, readonly string[]>>
+}[]
 
+type CudaToolkitVersion = (typeof cudaBuilds)[number]["toolkitVersion"]
+
+// Each CUDA host names the runner per toolkit it ships. Windows ships CUDA 12.9 only:
+// CUDA 11.8 has no supported toolchain on the windows-2022 MSVC image.
 const cudaHosts = [
   {
     host: "linux-arm64-gnu",
+    platform: "linux",
     runners: { "11.8": "ubuntu-22.04-arm", "12.9": "ubuntu-22.04-arm" },
   },
   {
     host: "linux-x64-gnu",
+    platform: "linux",
     runners: { "11.8": "ubuntu-22.04", "12.9": "ubuntu-22.04" },
   },
-] as const
+  {
+    host: "windows-x64-msvc",
+    platform: "windows",
+    runners: { "12.9": "windows-2022" },
+  },
+] as const satisfies readonly {
+  readonly host: HostId
+  readonly platform: CudaPlatform
+  readonly runners: Partial<Readonly<Record<CudaToolkitVersion, string>>>
+}[]
 
-const cudaBackendPacks: readonly BackendPack[] = cudaHosts.flatMap(({ host, runners }) =>
-  cudaBuilds.map((cuda) => ({
-    id: `cuda-${cuda.toolkitVersion}-${host}`,
-    host,
-    backend: "cuda" as const,
-    runner: runners[cuda.toolkitVersion],
-    cargoFeatures: ["dynamic-backends", "cuda-no-vmm"],
-    module: "libggml-cuda.so",
-    runtimeLibraries: cuda.runtimeLibraries,
-    cuda,
-  })))
+const cudaBackendPacks: readonly BackendPack[] = cudaHosts.flatMap(({ host, platform, runners }) =>
+  cudaBuilds.flatMap((cuda) => {
+    const runner: string | undefined = runners[cuda.toolkitVersion as keyof typeof runners]
+    if (runner === undefined) return []
+    return [{
+      id: `cuda-${cuda.toolkitVersion}-${host}`,
+      host,
+      backend: "cuda" as const,
+      runner,
+      cargoFeatures: ["dynamic-backends", "cuda-no-vmm"],
+      module: platform === "windows" ? "ggml-cuda.dll" : "libggml-cuda.so",
+      runtimeLibraries: cuda.runtimeLibraries[platform],
+      cuda: {
+        toolkitVersion: cuda.toolkitVersion,
+        architectures: cuda.architectures,
+      },
+    }]
+  }))
 
-// Windows release artifacts are intentionally disabled for now. Runtime support outside the
-// release system remains available to revisit once Windows builds are reliable.
 export const backendPacks: readonly BackendPack[] = [
   {
     id: "metal-darwin-arm64",
@@ -152,6 +192,16 @@ export const backendPacks: readonly BackendPack[] = [
     runner: "ubuntu-22.04",
     cargoFeatures: ["dynamic-backends", "vulkan"],
     module: "libggml-vulkan.so",
+    runtimeLibraries: [],
+    compatibility: { kind: "vulkan", minimumApi: "1.1.0" },
+  },
+  {
+    id: "vulkan1-windows-x64-msvc",
+    host: "windows-x64-msvc",
+    backend: "vulkan",
+    runner: "windows-2022",
+    cargoFeatures: ["dynamic-backends", "vulkan"],
+    module: "ggml-vulkan.dll",
     runtimeLibraries: [],
     compatibility: { kind: "vulkan", minimumApi: "1.1.0" },
   },

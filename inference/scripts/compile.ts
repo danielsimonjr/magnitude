@@ -201,15 +201,19 @@ const isBackendModule = (file: string): boolean => {
   ].some((prefix) => name.startsWith(prefix))
 }
 
+// Windows environments are case-insensitive and usually spell the loader search variable
+// "Path". Reuse the existing spelling so the spawned child does not receive two PATH entries.
+const loaderPathVariable = (): string => {
+  if (process.platform === "darwin") return "DYLD_LIBRARY_PATH"
+  if (process.platform !== "win32") return "LD_LIBRARY_PATH"
+  return Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH"
+}
+
 const readIdentity = async (
   binary: string,
   runtimeDirectories: readonly string[],
 ): Promise<IcnBinaryIdentity> => {
-  const loader = process.platform === "win32"
-    ? "PATH"
-    : process.platform === "darwin"
-      ? "DYLD_LIBRARY_PATH"
-      : "LD_LIBRARY_PATH"
+  const loader = loaderPathVariable()
   const stdout = await run([binary, "version", "--json"], {
     env: {
       ...process.env,
@@ -315,9 +319,12 @@ export const buildIcnBinary = async ({
   if (backendModules.length === 0) {
     throw new Error("ICN build emitted no dynamic backend modules")
   }
-  const installedRuntimeLibraries = (
-    await filesIn(resolve(nativeOutput, "lib"))
-  ).filter((file) => isRuntimeLibrary(file) && !isBackendModule(file))
+  // CMake installs shared libraries under lib/ on Linux and macOS; on Windows the DLLs land in
+  // bin/ (lib/ holds only MSVC import libraries, which isRuntimeLibrary rejects).
+  const installedRuntimeLibraries = [
+    ...await filesIn(resolve(nativeOutput, "lib")),
+    ...await filesIn(resolve(nativeOutput, "bin")),
+  ].filter((file) => isRuntimeLibrary(file) && !isBackendModule(file))
   const installedNames = new Set(
     installedRuntimeLibraries.map((file) => basename(file)),
   )

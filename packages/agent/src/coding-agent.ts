@@ -124,6 +124,7 @@ import { publishSkills } from './ambient/skills-ambient'
 import { publishAtifConfig, DEFAULT_ATIF_CONFIG } from './ambient/atif-ambient'
 import { publishInitialTask as publishInitialTaskAmbient } from './ambient/initial-task-ambient'
 import { ToolUniverseSourceLive } from './tools/tool-universe-live'
+import { shellDisplayName } from '@magnitudedev/utils'
 
 // =============================================================================
 // Coding Agent
@@ -478,7 +479,7 @@ function makeCodingAgentLive(options: CreateClientOptions) {
               return Effect.succeed({
                 cwd: process.cwd(),
                 platform: process.platform === 'darwin' ? 'macos' as const : process.platform === 'win32' ? 'windows' as const : 'linux' as const,
-                shell: process.env.SHELL?.split('/').pop() || 'bash',
+                shell: shellDisplayName(process.env.SHELL),
                 timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                 username: process.env.USER || 'unknown',
                 fullName: null,

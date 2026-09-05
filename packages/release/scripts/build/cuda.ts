@@ -105,9 +105,12 @@ export const inspectCudaCompatibility = async (
 ) => {
   const cudaRoot = process.env.CUDA_PATH?.trim()
   if (!cudaRoot) throw new Error("CUDA_PATH is required to inspect a CUDA pack")
+  // cuobjdump reads the fatbin sections of a PE DLL exactly as it does an ELF .so.
+  const tool = (name: string) =>
+    resolve(cudaRoot, "bin", process.platform === "win32" ? `${name}.exe` : name)
   const [images, compilerOutput] = await Promise.all([
-    inspectPtxImagesFromModule(resolve(cudaRoot, "bin", "cuobjdump"), module),
-    run([resolve(cudaRoot, "bin", "nvcc"), "--version"]),
+    inspectPtxImagesFromModule(tool("cuobjdump"), module),
+    run([tool("nvcc"), "--version"]),
   ])
   const [firstImage] = images
   if (!firstImage) {

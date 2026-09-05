@@ -109,6 +109,17 @@ export const verifyAppleDeploymentTarget = async (
   }
 }
 
+/**
+ * The environment variable the dynamic loader consults for this host. Windows environments
+ * are case-insensitive and usually spell it "Path"; reuse the existing spelling so a spawned
+ * child does not receive two PATH entries.
+ */
+export const loaderPathVariable = (host: HostId): string => {
+  if (host.startsWith("darwin-")) return "DYLD_LIBRARY_PATH"
+  if (!host.startsWith("windows-")) return "LD_LIBRARY_PATH"
+  return Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH"
+}
+
 export interface OwnedLoaderPathInputs {
   readonly host: HostId
   readonly executable?: string
@@ -122,6 +133,8 @@ export const verifyOwnedLoaderPaths = async ({
   modules,
   runtime,
 }: OwnedLoaderPathInputs): Promise<void> => {
+  // PE images carry no rpath: Windows resolves DLLs from the executable directory and PATH,
+  // and the launcher prepends the installation's runtime directory to PATH.
   if (host.startsWith("windows-")) return
 
   const inspect = async (file: string): Promise<readonly string[]> => {

@@ -4,6 +4,7 @@ import * as CommandExecutor from "@effect/platform/CommandExecutor"
 import * as FileSystem from "@effect/platform/FileSystem"
 import { loadSkills } from "@magnitudedev/skills"
 import { buildAgentEnv } from "@magnitudedev/roles"
+import { resolvePosixShell } from "@magnitudedev/utils"
 import type {
   RunBashResult,
   SessionError,
@@ -73,8 +74,13 @@ export function runBash(
 ): Effect.Effect<RunBashResult, SessionError, CommandExecutor.CommandExecutor> {
   return Effect.scoped(
     Effect.gen(function* () {
-      const shell = process.env.SHELL || "/bin/sh"
-      const baseCmd = Command.make(shell, "-c", command).pipe(
+      // POSIX shell only (Git Bash on Windows) — the classifier can't vet
+      // cmd.exe/PowerShell syntax.
+      const shell = resolvePosixShell()
+      if (!shell.ok) {
+        return { stdout: "", stderr: shell.message, exitCode: 1, cwd: context.cwd }
+      }
+      const baseCmd = Command.make(shell.shell.path, ...shell.shell.args, command).pipe(
         Command.workingDirectory(context.cwd),
         // Secrets (tokens, API keys, ...) are stripped from the inherited env;
         // see sanitizeAgentEnv in @magnitudedev/roles.
