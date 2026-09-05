@@ -1,0 +1,28 @@
+{
+  "name": "@magnitudedev/icn-models",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./gguf": "./src/gguf.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bunx --bun vitest run"
+  },
+  "dependencies": {
+    "@effect/platform": "^0.96.0",
+    "@effect/platform-bun": "^0.90.0",
+    "@magnitudedev/icn-contracts": "workspace:*",
+    "@magnitudedev/icn-protocol": "workspace:*",
+    "@noble/hashes": "^2.2.0",
+    "effect": "3.21.2"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "vitest": "^3.2.4"
+  }
+}

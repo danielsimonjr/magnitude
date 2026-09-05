@@ -1,9 +1,15 @@
 ---
 applies_to:
   - packages/icn-native/**
-  - inference/**
+  - packages/icn-contracts/**
+  - packages/icn-models/**
+  - packages/icn-engine/**
+  - packages/icn-hardware/**
+  - packages/icn-server/**
   - packages/icn/**
   - packages/icn-protocol/**
+  - packages/release/scripts/build/icn-typescript.ts
+  - inference/**
 ---
 
 # Inference engine migration to TypeScript on Bun
