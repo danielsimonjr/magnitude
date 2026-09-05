@@ -1,0 +1,4 @@
+native/build.json
+native/*.so
+native/*.dylib
+native/*.dll
