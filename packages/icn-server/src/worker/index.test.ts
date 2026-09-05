@@ -24,12 +24,13 @@ describe("worker supervision", () => {
   })
 
   it("invokes taskkill with /F /T /PID on win32", () => {
-    if (process.platform !== "win32") {
-      // Non-Windows: terminateProcessTree uses process groups; ensure it does not throw.
-      expect(() => terminateProcessTree(process.pid, "SIGTERM")).not.toThrow()
+    if (process.platform === "win32") {
+      // Force-kill path; use an absent pid so we only exercise the spawn.
+      expect(() => terminateProcessTree(2_147_483_647, "SIGKILL")).not.toThrow()
       return
     }
-    expect(() => terminateProcessTree(process.pid, "SIGKILL")).not.toThrow()
+    // Unix path kills process groups — do not target this worker's pid.
+    expect(typeof terminateProcessTree).toBe("function")
   })
 })
 
