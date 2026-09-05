@@ -15,7 +15,20 @@ export {
 
 // Path confinement (shared with the agent's filesystem tools)
 export { resolvePhysicalPath, isPhysicallyWithin, escapesViaSymlink, touchesProtectedPath } from './path-confinement'
-export { magnitudeProtectedPaths, stripMagnitudeSecrets } from './protected-paths'
+export { magnitudeProtectedPaths } from './protected-paths'
+
+// Agent shell environment sanitization
+export {
+  sanitizeAgentEnv,
+  buildAgentEnv,
+  isSecretEnvName,
+  parseAgentEnvPassthrough,
+  stripMagnitudeSecrets,
+  MAGNITUDE_SECRET_ENV,
+  SECRET_ENV_NAME,
+  ALWAYS_KEEP_ENV,
+  AGENT_ENV_PASSTHROUGH_VAR,
+} from './agent-env'
 
 // Prompt
 export { definePrompt } from './prompt'

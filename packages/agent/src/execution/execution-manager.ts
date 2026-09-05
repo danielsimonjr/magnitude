@@ -6,14 +6,12 @@
 
 import * as path from 'path'
 import { Effect, Layer } from 'effect'
-import { ToolInterceptorTag, type ToolInterceptor } from './permission-gate'
 import { Fork, Projection, WorkerBusTag, AmbientServiceTag, type WorkerBusService } from '@magnitudedev/event-core'
 import type { AppEvent } from '../events'
 import { isToolKey, type ToolKey } from '../tools/toolkits'
 
 import { isRoleId, type RoleId } from '../agents/role-validation'
 import { getAgentDefinition } from '../agents/registry'
-import { buildPolicyInterceptor, type AgentResolver } from './permission-gate'
 export { IDENTICAL_RESPONSE_BREAKER_THRESHOLD } from './types'
 
 import { AgentStateReaderTag, type AgentStateReader } from '../tools/fork'
@@ -81,8 +79,8 @@ type ExecutionProjectionRequirements =
 // =============================================================================
 
 /**
- * Build the unified Effect layer for a fork — covers tool execution, interceptor, and emit.
- * Tools use reader services, interceptor uses PolicyContextProvider.
+ * Build the unified Effect layer for a fork — covers tool execution and emit.
+ * Tools use reader services; policy enforcement lives in harness-hooks.ts and reads PolicyContextProvider.
  */
 function makeForkLayers(
   forkId: string | null,
@@ -98,7 +96,6 @@ function makeForkLayers(
 
   conversationProjection: ConversationProjectionInstance,
   persistenceLayer: Layer.Layer<ChatPersistence, never, never>,
-  policyInterceptor: ReturnType<typeof buildPolicyInterceptor>,
 
   cwd: string,
   scratchpadPath: string,
@@ -145,14 +142,6 @@ function makeForkLayers(
     workingStateProjection,
   )
 
-  const providedInterceptor: ToolInterceptor = {
-    beforeExecute: (ctx) =>
-      policyInterceptor(ctx).pipe(
-        Effect.provideService(ForkContext, { forkId, roleId }),
-        Effect.provideService(PolicyContextProviderTag, policyCtxProvider),
-      ),
-  }
-
   return Layer.mergeAll(
     Layer.succeed(ForkContext, { forkId, roleId }),
 
@@ -166,7 +155,6 @@ function makeForkLayers(
 
     Layer.succeed(WorkingDirectoryTag, { cwd, scratchpadPath }),
     Layer.succeed(PolicyContextProviderTag, policyCtxProvider),
-    Layer.succeed(ToolInterceptorTag, providedInterceptor),
     persistenceLayer,
 
     Layer.succeed(ProjectionReaderTag, {
@@ -191,10 +179,6 @@ const makeExecutionManager = Effect.gen(function* () {
   // Bound observables map
   const boundObservables = new Map<string | null, BoundObservable[]>()
 
-  // Approval state for gated tool calls
-  // Maps forkId → roleId, populated when forks are created.
-  const forkRoles = new Map<string, RoleId>()
-
   // Pre-built teardown effects (captured at initFork time with services already provided)
   const forkTeardowns = new Map<string, Effect.Effect<void>>()
 
@@ -208,21 +192,6 @@ const makeExecutionManager = Effect.gen(function* () {
   // VCS layer — built once per execution manager (session scope).
   // All forks in a session share the same working directory and shadow VCS repo.
   let vcsLayer: Layer.Layer<ShadowVcs, never, never>
-
-  /**
-   * Resolve the active agent definition for a fork.
-   * Child forks use their fixed role. Root fork uses the orchestrator definition.
-   */
-  const resolveAgent: AgentResolver = (forkId) => {
-    if (forkId !== null) {
-      const roleId = forkRoles.get(forkId) ?? 'engineer'
-      return getAgentDefinition(roleId)
-    }
-    return getAgentDefinition('leader')
-  }
-
-  // Build the policy interceptor (shared across all forks, resolves agent dynamically)
-  const policyInterceptor = buildPolicyInterceptor(resolveAgent)
 
   function buildForkContext(params: { mode: string; prompt: string; outputSchema?: JsonSchema | undefined }) {
     return Effect.gen(function* () {
@@ -287,7 +256,7 @@ const makeExecutionManager = Effect.gen(function* () {
         goalProjection,
         windowProjection,
         conversationProjection,
-        persistenceLayer, policyInterceptor, cwd, scratchpadPath, sessionOptions,
+        persistenceLayer, cwd, scratchpadPath, sessionOptions,
         detachedShellRegistryService,
         vcsLayer,
       )
@@ -305,11 +274,6 @@ const makeExecutionManager = Effect.gen(function* () {
       if (forkId && roleDef.teardown) {
         const teardownEffect = roleDef.teardown({ forkId, roleId, cwd, scratchpadPath }) as Effect.Effect<void>
         forkTeardowns.set(forkId, teardownEffect)
-      }
-
-      // Store roleId for agent resolution
-      if (forkId !== null) {
-        forkRoles.set(forkId, roleId)
       }
 
       // Cache the layers
@@ -348,9 +312,6 @@ const makeExecutionManager = Effect.gen(function* () {
       forkScratchpadPaths.delete(forkId)
 
       boundObservables.delete(forkId)
-      if (forkId !== null) {
-        forkRoles.delete(forkId)
-      }
       identicalContinueTracker.delete(forkId)
     }),
 
@@ -366,7 +327,6 @@ const makeExecutionManager = Effect.gen(function* () {
       taskId: string
     }) => Effect.gen(function* () {
       const forkId = createId()
-      forkRoles.set(forkId, params.role)
       const workerBus = yield* WorkerBusTag<AppEvent>()
       const context = yield* buildForkContext(params)
 

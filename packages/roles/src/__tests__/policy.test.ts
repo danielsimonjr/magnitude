@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolCallId } from '@magnitudedev/ai'
 import { denyWritesOutside, denyWritesToProtectedPaths } from '../policy'
-import { magnitudeProtectedPaths, stripMagnitudeSecrets } from '../protected-paths'
+import { magnitudeProtectedPaths } from '../protected-paths'
 import { createRoles } from '../roles/index'
 
 let base: string
@@ -104,21 +104,5 @@ describe('role policies', () => {
       }
       expect(decision?._tag).toBe('Deny')
     }
-  })
-})
-
-describe('stripMagnitudeSecrets', () => {
-  test('removes Magnitude credentials and keeps user variables', () => {
-    const env = stripMagnitudeSecrets({
-      MAGNITUDE_API_KEY: 'a',
-      EXA_API_KEY: 'b',
-      MAGNITUDE_ACN_TOKEN: 'c',
-      MAGNITUDE_SOMETHING_KEY: 'd',
-      GH_TOKEN: 'keep',
-      PATH: '/bin',
-      MAGNITUDE_MODEL: 'keep-too',
-      UNDEFINED_ONE: undefined,
-    })
-    expect(env).toEqual({ GH_TOKEN: 'keep', PATH: '/bin', MAGNITUDE_MODEL: 'keep-too' })
   })
 })
