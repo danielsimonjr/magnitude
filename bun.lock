@@ -340,6 +340,14 @@
         "vitest": "^3.2.4",
       },
     },
+    "packages/icn-hardware": {
+      "name": "@magnitudedev/icn-hardware",
+      "version": "0.0.1",
+      "devDependencies": {
+        "@types/bun": "1.3.14",
+        "vitest": "^3.2.4",
+      },
+    },
     "packages/icn-models": {
       "name": "@magnitudedev/icn-models",
       "version": "0.0.1",
@@ -373,6 +381,27 @@
       "devDependencies": {
         "@effect/platform": "^0.96.0",
         "@effect/platform-bun": "^0.90.0",
+        "@types/bun": "1.3.14",
+        "vitest": "^3.2.4",
+      },
+    },
+    "packages/icn-server": {
+      "name": "@magnitudedev/icn-server",
+      "version": "0.0.1",
+      "bin": {
+        "magnitude-inference": "./src/main.ts",
+      },
+      "dependencies": {
+        "@effect/platform": "^0.96.0",
+        "@effect/platform-bun": "^0.90.0",
+        "@magnitudedev/icn-contracts": "workspace:*",
+        "@magnitudedev/icn-engine": "workspace:*",
+        "@magnitudedev/icn-hardware": "workspace:*",
+        "@magnitudedev/icn-models": "workspace:*",
+        "@magnitudedev/icn-protocol": "workspace:*",
+        "effect": "3.21.2",
+      },
+      "devDependencies": {
         "@types/bun": "1.3.14",
         "vitest": "^3.2.4",
       },
@@ -1018,11 +1047,15 @@
 
     "@magnitudedev/icn-engine": ["@magnitudedev/icn-engine@workspace:packages/icn-engine"],
 
+    "@magnitudedev/icn-hardware": ["@magnitudedev/icn-hardware@workspace:packages/icn-hardware"],
+
     "@magnitudedev/icn-models": ["@magnitudedev/icn-models@workspace:packages/icn-models"],
 
     "@magnitudedev/icn-native": ["@magnitudedev/icn-native@workspace:packages/icn-native"],
 
     "@magnitudedev/icn-protocol": ["@magnitudedev/icn-protocol@workspace:packages/icn-protocol"],
+
+    "@magnitudedev/icn-server": ["@magnitudedev/icn-server@workspace:packages/icn-server"],
 
     "@magnitudedev/inference": ["@magnitudedev/inference@workspace:inference"],
 

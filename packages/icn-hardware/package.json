@@ -1,0 +1,20 @@
+{
+  "name": "@magnitudedev/icn-hardware",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./memory": "./src/memory.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bunx --bun vitest run"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "@magnitudedev/icn-server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/main.ts",
+  "types": "src/main.ts",
+  "bin": {
+    "magnitude-inference": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./bootstrap": "./src/bootstrap.ts",
+    "./auth": "./src/auth.ts",
+    "./memory-supervisor": "./src/memory-supervisor.ts",
+    "./worker": "./src/worker/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bunx --bun vitest run"
+  },
+  "dependencies": {
+    "@effect/platform": "^0.96.0",
+    "@effect/platform-bun": "^0.90.0",
+    "@magnitudedev/icn-contracts": "workspace:*",
+    "@magnitudedev/icn-engine": "workspace:*",
+    "@magnitudedev/icn-hardware": "workspace:*",
+    "@magnitudedev/icn-models": "workspace:*",
+    "@magnitudedev/icn-protocol": "workspace:*",
+    "effect": "3.21.2"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "vitest": "^3.2.4"
+  }
+}

@@ -8,7 +8,7 @@ Tracks the TypeScript-on-Bun migration of the inference engine described in
 | 1. Native slice (`packages/icn-native`) | Done | Loads GGUF, tokenizes, greedy decode, streams text; 16 tests; verified on CPU with a synthetic model |
 | 2. Contracts and store | In progress | `icn-contracts` (37 tests) + `icn-models` store/catalog/discovery (46 tests); models still uses `_contracts-shim` pending import cutover; HF network paths mocked |
 | 3. Engine | In progress | `packages/icn-engine` scheduler, sequence pool, KV reuse, sampling config, reasoning resolution (28 CPU tests); native FFI stubs for sampling, speculative, multimodal, worker isolation |
-| 4. HTTP and lifecycle | Not started | HTTP contract and ACN integration verifiable here |
+| 4. HTTP and lifecycle | In progress | `packages/icn-server` (bootstrap, Bun HTTP, auth, fake completions, worker/memory stubs, CLI) + `packages/icn-hardware` memory policy (CPU tests); catalog/instance/HF routes stubbed; ACN lifecycle integration pending |
 | 5. Release cutover | Not started | Needs release runners |
 
 ## Open items requiring hardware
@@ -24,8 +24,8 @@ Tracks the TypeScript-on-Bun migration of the inference engine described in
 - Complete HF-backed catalog refresh, release catalog materialization, and `ManagedModelDownloads`.
 - Connect engine sampling/chat-template paths to `@magnitudedev/icn-native` and add CPU token-for-token parity harness.
 - Implement Bun Worker FFI owner (`spawnInferenceWorker`) with MessageChannel token streams.
-- Port `packages/icn-server` (OpenAPI HTTP, bootstrap, worker supervision, memory supervisor).
-- Port `packages/icn-hardware` calibration/capacity summary (partially hardware-gated).
+- Port `packages/icn-server` OpenAPI management routes, real worker IPC, and ACN integration suite wiring.
+- Port `packages/icn-hardware` calibration/capacity summary beyond memory thresholds (partially hardware-gated).
 - Release scripts for Bun-compiled executable + shim (phase 5).
 
 ## Decisions pending
