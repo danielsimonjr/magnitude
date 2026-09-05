@@ -1,0 +1,38 @@
+.memory-canvas-wrap {
+  position: relative;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #101114;
+}
+
+.memory-canvas {
+  display: block;
+}
+
+.atlas-tooltip {
+  position: absolute;
+  z-index: 10;
+  display: grid;
+  gap: 4px;
+  max-width: 360px;
+  padding: 9px 10px;
+  border: 1px solid #30343f;
+  border-radius: 6px;
+  background: rgba(23, 25, 31, 0.96);
+  color: #e7e9ee;
+  pointer-events: none;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.atlas-tooltip strong {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.atlas-tooltip span {
+  color: #8e96a8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}

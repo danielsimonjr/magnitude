@@ -1,9 +1,9 @@
-import { svelte } from "@sveltejs/vite-plugin-svelte"
+import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import { defineConfig } from "vite"
 
 export default defineConfig({
-  plugins: [tailwindcss(), svelte()],
+  plugins: [tailwindcss(), react()],
   server: {
     host: "127.0.0.1",
     port: 5187,
