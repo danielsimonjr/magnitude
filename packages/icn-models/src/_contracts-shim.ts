@@ -700,12 +700,541 @@ export interface RemoveInstalledModelPackageResponse {
   freed_bytes: number
 }
 
-export type CatalogPackageRole = "target" | "dependency"
+export type CatalogPackageRole = "Target" | "Dependency"
+
+export type CatalogInstallationOperationId = string & {
+  readonly _tag: "CatalogInstallationOperationId"
+}
+
+export type ModelId = string & { readonly _tag: "ModelId" }
+
+export type CatalogBaseId = string & { readonly _tag: "CatalogBaseId" }
+
+export type CatalogVariantId = string & { readonly _tag: "CatalogVariantId" }
+
+export type HuggingFaceRepositoryId = string & { readonly _tag: "HuggingFaceRepositoryId" }
+
+export type HuggingFaceArtifactSelector = string & { readonly _tag: "HuggingFaceArtifactSelector" }
+
+export type ParsedModelId =
+  | { readonly _tag: "Catalog"; base_id: CatalogBaseId; variant_id: CatalogVariantId }
+  | {
+      readonly _tag: "HuggingFace"
+      repository_id: HuggingFaceRepositoryId
+      artifact_selector: HuggingFaceArtifactSelector
+    }
+
+export class ModelIdError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ModelIdError"
+  }
+}
+
+const validateNormalizedComponent = (value: string, label: string): void => {
+  if (value.length === 0) {
+    throw new ModelIdError(`${label} must not be empty`)
+  }
+  if (value === "." || value === "..") {
+    throw new ModelIdError(`${label} must not be a traversal component`)
+  }
+  if (value.includes("\\")) {
+    throw new ModelIdError(`${label} must not contain a backslash`)
+  }
+  for (const char of value) {
+    const code = char.codePointAt(0)!
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
+      throw new ModelIdError(`${label} must not contain control characters`)
+    }
+  }
+}
+
+export const CatalogBaseId = {
+  new(value: string): CatalogBaseId {
+    validateNormalizedComponent(value, "catalog base")
+    if (value === "hf" || value.includes(":") || value.includes("/")) {
+      throw new ModelIdError("catalog base must be one non-hf identity component")
+    }
+    return value as CatalogBaseId
+  },
+  asStr(value: CatalogBaseId): string {
+    return value
+  },
+}
+
+export const CatalogVariantId = {
+  new(value: string): CatalogVariantId {
+    const components = value.split(":")
+    const format = components[0] ?? ""
+    const quality = components[1] ?? ""
+    if (components.length !== 2) {
+      throw new ModelIdError("catalog variant must have format and quality components")
+    }
+    validateNormalizedComponent(format, "catalog variant format")
+    validateNormalizedComponent(quality, "catalog variant quality")
+    if (format.includes("/") || quality.includes("/")) {
+      throw new ModelIdError("catalog variant components must not contain slashes")
+    }
+    return value as CatalogVariantId
+  },
+  asStr(value: CatalogVariantId): string {
+    return value
+  },
+}
+
+export const HuggingFaceRepositoryId = {
+  new(value: string): HuggingFaceRepositoryId {
+    const components = value.split("/")
+    const owner = components[0] ?? ""
+    const repository = components[1] ?? ""
+    if (components.length !== 2) {
+      throw new ModelIdError("repository must have exactly owner and repository components")
+    }
+    validateNormalizedComponent(owner, "owner")
+    validateNormalizedComponent(repository, "repository")
+    return value as HuggingFaceRepositoryId
+  },
+  asStr(value: HuggingFaceRepositoryId): string {
+    return value
+  },
+}
+
+export const HuggingFaceArtifactSelector = {
+  new(value: string): HuggingFaceArtifactSelector {
+    if (value.startsWith("/")) {
+      throw new ModelIdError("artifact selector must be repository-relative")
+    }
+    if (value.includes("\\")) {
+      throw new ModelIdError("artifact selector must not contain a backslash")
+    }
+    if (!value.toLowerCase().endsWith(".gguf")) {
+      throw new ModelIdError("artifact selector must identify a GGUF file")
+    }
+    if (value.split("/").some((component) => component.length === 0)) {
+      throw new ModelIdError("artifact selector must not contain empty components")
+    }
+    for (const component of value.split("/")) {
+      validateNormalizedComponent(component, "artifact selector component")
+    }
+    return value as HuggingFaceArtifactSelector
+  },
+  asStr(value: HuggingFaceArtifactSelector): string {
+    return value
+  },
+}
+
+const parseModelId = (value: string): ParsedModelId => {
+  if (value.startsWith("hf:")) {
+    const remainder = value.slice("hf:".length)
+    const slashIndex = remainder.indexOf("/")
+    const secondSlash = remainder.indexOf("/", slashIndex + 1)
+    if (slashIndex === -1 || secondSlash === -1) {
+      throw new ModelIdError("invalid model ID")
+    }
+    const owner = remainder.slice(0, slashIndex)
+    const repoEnd = remainder.indexOf("/", slashIndex + 1)
+    const repository = remainder.slice(slashIndex + 1, repoEnd)
+    const selector = remainder.slice(repoEnd + 1)
+    return {
+      _tag: "HuggingFace",
+      repository_id: HuggingFaceRepositoryId.new(`${owner}/${repository}`),
+      artifact_selector: HuggingFaceArtifactSelector.new(selector),
+    }
+  }
+  const colonIndex = value.indexOf(":")
+  if (colonIndex === -1) {
+    throw new ModelIdError("invalid model ID")
+  }
+  return {
+    _tag: "Catalog",
+    base_id: CatalogBaseId.new(value.slice(0, colonIndex)),
+    variant_id: CatalogVariantId.new(value.slice(colonIndex + 1)),
+  }
+}
+
+export const ModelId = {
+  catalog(baseId: CatalogBaseId, variantId: CatalogVariantId): ModelId {
+    return `${baseId}:${variantId}` as ModelId
+  },
+  huggingFace(
+    repositoryId: HuggingFaceRepositoryId,
+    artifactSelector: HuggingFaceArtifactSelector,
+  ): ModelId {
+    return `hf:${repositoryId}/${artifactSelector}` as ModelId
+  },
+  parse(value: string): ModelId {
+    parseModelId(value)
+    return value as ModelId
+  },
+  parsed(value: ModelId): ParsedModelId {
+    return parseModelId(value)
+  },
+  asStr(value: ModelId): string {
+    return value
+  },
+}
+
+export class ModelReleaseDate {
+  readonly value: string
+
+  private constructor(value: string) {
+    this.value = value
+  }
+
+  static new(value: string): ModelReleaseDate {
+    if (!ModelReleaseDate.isValidIsoDate(value)) {
+      throw new Error(`invalid model release date ${JSON.stringify(value)}; expected YYYY-MM-DD`)
+    }
+    return new ModelReleaseDate(value)
+  }
+
+  asStr(): string {
+    return this.value
+  }
+
+  private static isValidIsoDate(value: string): boolean {
+    if (value.length !== 10 || value[4] !== "-" || value[7] !== "-") {
+      return false
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      if (index === 4 || index === 7) continue
+      if (value[index]! < "0" || value[index]! > "9") return false
+    }
+    const year = Number(value.slice(0, 4))
+    const month = Number(value.slice(5, 7))
+    const day = Number(value.slice(8, 10))
+    if (year === 0) return false
+    const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+    const daysInMonth =
+      month === 1 || month === 3 || month === 5 || month === 7 || month === 8 || month === 10 || month === 12
+        ? 31
+        : month === 4 || month === 6 || month === 9 || month === 11
+          ? 30
+          : month === 2
+            ? leapYear
+              ? 29
+              : 28
+            : 0
+    return day > 0 && day <= daysInMonth
+  }
+}
+
+export type ModelParameterization =
+  | { readonly architecture: "dense"; totalParameters: number }
+  | {
+      readonly architecture: "mixtureOfExperts"
+      totalParameters: number
+      activeParameters: number
+    }
+
+export type IntelligenceEstimateConfidence = "high" | "moderate" | "low"
+
+export type IntelligenceTarget = "artificialAnalysisIntelligenceIndex"
+
+export type IntelligenceProvenance =
+  | {
+      readonly kind: "artificialAnalysisIntelligenceIndex"
+      methodologyVersion: string
+      asOfDate: string
+      url: string
+    }
+  | {
+      readonly kind: "estimate"
+      target: IntelligenceTarget
+      methodologyVersion: string
+      asOfDate: string
+      confidence: IntelligenceEstimateConfidence
+      methodology: string
+      evidenceUrls: readonly string[]
+    }
+
+export interface CatalogIntelligence {
+  score: number
+  provenance: IntelligenceProvenance
+}
+
+export interface ModelServingConfiguration {
+  bundle: ServableModelBundle
+  profile: ServingProfile
+}
+
+export interface ModelMetadata {
+  format: string
+  architecture: string
+  quantization: string
+  quantization_name: string
+  storage_bytes: number
+  maximum_context_length?: number
+}
+
+export interface ReadyModel {
+  metadata: ModelMetadata
+  profile: ServingProfile
+  speculative_method?: SpeculativeMethod
+}
+
+export type EffectiveModel =
+  | { readonly _tag: "Ready"; model: ReadyModel }
+  | { readonly _tag: "Unavailable"; failure: ModelFailure }
+
+export type ModelInstallationOwnership = "Magnitude" | "ExternalHuggingFace" | "Mixed"
+
+export type ModelInstallation =
+  | {
+      readonly _tag: "Resolved"
+      installed_bytes: number
+      primary_path: string
+      ownership: ModelInstallationOwnership
+    }
+  | {
+      readonly _tag: "Unresolved"
+      installed_bytes: number
+      ownership: ModelInstallationOwnership
+    }
+
+export type ResolvedModelInstallation =
+  | {
+      readonly _tag: "Resolved"
+      installed_bytes: number
+      primary_path: string
+      ownership: ModelInstallationOwnership
+    }
 
 export interface RecommendableModel {
-  model_id: string
-  variant_id: string
-  configuration: { bundle: ServableModelBundle }
+  model_id: CatalogBaseId
+  variant_id: CatalogVariantId
+  configuration: ModelServingConfiguration
+  display_name: string
+  variant_label: string
+  description: string
+  release_date: ModelReleaseDate
+  license: string
+  parameterization: ModelParameterization
+  intelligence: CatalogIntelligence
+  fidelity_rank: number
+  quantization_aware: boolean
+}
+
+export interface CatalogDiagnostic {
+  model_id: CatalogBaseId
+  variant_id: CatalogVariantId
+  failure: ModelFailure
+}
+
+export interface RecommendableModelCatalog {
+  models: readonly RecommendableModel[]
+  diagnostics: readonly CatalogDiagnostic[]
+}
+
+export type CatalogModelUpdate =
+  | { readonly _tag: "Current" }
+  | { readonly _tag: "Available"; required_download_bytes: number }
+
+export type CatalogModelState =
+  | { readonly _tag: "NotInstalled" }
+  | {
+      readonly _tag: "Installed"
+      effective: EffectiveModel
+      installation: ModelInstallation
+      update_state: CatalogModelUpdate
+    }
+
+export interface CatalogModel {
+  id: ModelId
+  desired: ReadyModel
+  display_name: string
+  variant_label: string
+  description: string
+  release_date: ModelReleaseDate
+  license: string
+  source_urls: readonly string[]
+  parameterization: ModelParameterization
+  intelligence: CatalogIntelligence
+  fidelity_rank: number
+  quantization_aware: boolean
+  local_state: CatalogModelState
+}
+
+export interface CatalogModelsResponse {
+  revision: number
+  reconciliation_complete: boolean
+  models: readonly CatalogModel[]
+}
+
+export interface CatalogPackageAffiliation {
+  model_id: CatalogBaseId
+  variant_id: CatalogVariantId
+  package_id: ModelPackageId
+  repository: string
+  role: CatalogPackageRole
+}
+
+export type DiscoveredModelCatalogAttribution =
+  | { readonly _tag: "NotInCatalog" }
+  | { readonly _tag: "Failed"; failure: ModelFailure }
+
+export type DiscoveredModelState =
+  | {
+      readonly _tag: "Ready"
+      installation: ResolvedModelInstallation
+      model: ReadyModel
+      catalog_attribution: DiscoveredModelCatalogAttribution
+    }
+  | {
+      readonly _tag: "Unavailable"
+      installation: ResolvedModelInstallation
+      failure: ModelFailure
+    }
+
+export interface DiscoveredModel {
+  id: ModelId
+  state: DiscoveredModelState
+}
+
+export interface DiscoveredModelsResponse {
+  revision: number
+  reconciliation_complete: boolean
+  models: readonly DiscoveredModel[]
+}
+
+export type CatalogInstallationAdmission =
+  | { readonly _tag: "Current" }
+  | { readonly _tag: "Admitted"; operation_id: CatalogInstallationOperationId }
+
+export interface CatalogInstallationProgress {
+  stage: DownloadStage
+  completed_bytes: number
+  total_bytes: number
+  bytes_per_second?: number
+}
+
+export type CatalogInstallationOperationState =
+  | { readonly _tag: "Pending"; progress: CatalogInstallationProgress }
+  | { readonly _tag: "Running"; progress: CatalogInstallationProgress }
+  | { readonly _tag: "Completed" }
+  | {
+      readonly _tag: "Failed"
+      progress: CatalogInstallationProgress
+      failure: DownloadFailure
+      acknowledged: boolean
+    }
+  | { readonly _tag: "Cancelled"; progress: CatalogInstallationProgress }
+
+export interface CatalogInstallationOperation {
+  operation_id: CatalogInstallationOperationId
+  model_id: ModelId
+  state: CatalogInstallationOperationState
+}
+
+export interface CatalogInstallationsResponse {
+  operations: readonly CatalogInstallationOperation[]
+}
+
+export type CatalogInstallationRetentionReason = "SharedMaterial" | "ExternalOwnership"
+
+export type CatalogInstallationRemoval =
+  | { readonly _tag: "Removed"; reclaimed_bytes: number }
+  | { readonly _tag: "Retained"; reason: CatalogInstallationRetentionReason }
+
+export type CatalogModelSelection = "Desired" | "Effective"
+
+export type ModelAssessmentSubject =
+  | { readonly _tag: "Catalog"; model_id: ModelId; selection: CatalogModelSelection }
+  | { readonly _tag: "Discovery"; model_id: ModelId }
+
+export interface ModelDomainInvalidation {
+  revision: number
+}
+
+export interface HuggingFaceRepositoryRequest {
+  repository: string
+  revision: string
+}
+
+export interface HuggingFaceRepositoryFile {
+  path: string
+  size_bytes: number
+  content: ContentIdentity
+}
+
+export interface HuggingFaceRepositorySnapshot {
+  repository: string
+  commit: string
+  last_modified: string | null
+  downloads: number | null
+  likes: number | null
+  gated: boolean
+  private: boolean
+  license: string | null
+  license_url: string | null
+  base_models: readonly string[]
+  tags: readonly string[]
+  gguf_files: readonly HuggingFaceRepositoryFile[]
+}
+
+export interface HuggingFaceModelSearchResult {
+  repository: string
+  commit: string
+  last_modified: string | null
+  downloads: number | null
+  likes: number | null
+  gated: boolean
+  private: boolean
+  tags: readonly string[]
+}
+
+export interface HuggingFaceModelSearchResults {
+  models: readonly HuggingFaceModelSearchResult[]
+}
+
+export interface HuggingFaceModelSearchRequest {
+  query: string
+  limit: number
+}
+
+export type ModelPreviewComponentRole = "Weights" | "Projector" | "Draft" | "Mtp" | "Auxiliary"
+
+export interface ModelPreviewComponentSource {
+  path: string
+  role: ModelPreviewComponentRole
+}
+
+export interface ModelPreviewSource {
+  repository: string
+  revision: string
+  primary_gguf: string
+  additional_components: readonly ModelPreviewComponentSource[]
+}
+
+export interface ModelPreviewProfile {
+  id: string
+  context_length: number
+  parallel_sequences: number
+  performance_context_tokens: readonly number[]
+}
+
+export interface ModelPreviewRequest {
+  source: ModelPreviewSource
+  profiles: readonly ModelPreviewProfile[]
+}
+
+export interface ModelPreviewAssessment {
+  profile_id: string
+  artifact_fingerprint: string
+  hardware_topology: string
+  execution: CachedModelAssessment
+}
+
+export interface ModelPreview {
+  repository: string
+  commit: string
+  components: readonly ModelComponent[]
+  properties: InventoryProperties
+  assessments: readonly ModelPreviewAssessment[]
+}
+
+export interface CatalogPackageRemover {
+  removeCatalogPackages(packageIds: readonly ModelPackageId[]): Promise<number>
 }
 
 // Re-export Schema helper type for optional fields in future contract schemas.

@@ -1,4 +1,11 @@
-/** Deferred wave-2 modules (catalog, discovery, preview, hugging_face, planner, domains, projection, service). */
-export const catalogDeferred = (): void => {
-  throw new Error("@magnitudedev/icn-catalog deferred — see packages/icn-models/src/deferred/")
-}
+export * from "../catalog"
+export * from "../catalog-affiliations"
+export * from "../catalog-installations"
+export * from "../catalog-models"
+export * from "../discovered-models"
+export * from "../hugging-face"
+export * from "../model-domains"
+export * from "../model-projection"
+export * from "../planner-bundle"
+export * from "../planner-stub"
+export * from "../preview"

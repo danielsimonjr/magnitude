@@ -743,7 +743,7 @@ const scanManaged = (config: InventoryConfig, output: DiscoveryCandidate[]): voi
   }
 }
 
-const catalogPackages = (
+export const catalogPackages = (
   model: RecommendableModel,
 ): Array<[ModelPackage, "target" | "dependency"]> => {
   const bundle = model.configuration.bundle
