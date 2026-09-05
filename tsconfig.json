@@ -48,8 +48,6 @@
       "@magnitudedev/icn-server/*": ["./packages/icn-server/src/*"],
       "@magnitudedev/icn-hardware": ["./packages/icn-hardware/src"],
       "@magnitudedev/icn-hardware/*": ["./packages/icn-hardware/src/*"],
-      "@magnitudedev/icn-parity": ["./packages/icn-parity/src"],
-      "@magnitudedev/icn-parity/*": ["./packages/icn-parity/src/*"],
       "@magnitudedev/icn": ["./packages/icn/src"],
       "@magnitudedev/icn/*": ["./packages/icn/src/*"],
     },
