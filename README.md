@@ -54,8 +54,8 @@ The interactive setup lets you browse the recommended models and choose one your
 
 ## Why Magnitude?
 
-- **Free to run:** no token costs, API keys, or rate limits
-- **Fully private and offline:** models, prompts, and files stay on your machine
+- **Free to run:** no token costs, API keys, or rate limits for local models
+- **Private and offline inference:** models, prompts, and files stay on your machine
 - **Agent-first setup:** one prompt and your agent walks you through the rest
 - **Knows your hardware:** profiles your chip, memory, and bandwidth
 - **Recommends what fits:** the best models for your machine, with estimated tok/s
@@ -87,11 +87,33 @@ No. It runs in the background, loads models when your agent needs them, and unlo
 
 ### Does my data go to the cloud?
 
-No. Prompts, files, and models stay on your machine.
+No. Local inference never leaves your machine: prompts, files, and models stay local, and the
+inference server listens only on loopback.
+
+Two optional features do use the network, and only if you turn them on:
+
+- **Magnitude cloud models** in the built-in harness, enabled by setting `MAGNITUDE_API_KEY`.
+  Requests to those models go to `app.magnitude.dev` along with your OS family and shell name.
+- **Web search** in the built-in harness, enabled by setting `EXA_API_KEY`. Search queries go to
+  Exa.
+
+Neither is configured by default, and neither affects local models.
 
 ### Can it run completely offline?
 
-Yes. Once Magnitude and a model are downloaded, no internet connection needed.
+Yes, for inference. Once Magnitude and a model are downloaded, no internet connection is needed to
+run models or serve your agent.
+
+Some CLI conveniences reach out when a connection is available and stay quiet when it is not:
+
+| What | When | Where |
+|---|---|---|
+| Downloading the Magnitude runtime and models | First run, `magnitude update`, `magnitude catalog pull` | GitHub releases, Hugging Face |
+| Checking for a newer CLI version | Starting the interactive `magnitude` command | npm registry |
+
+The update check only reads the published version list. If it fails or you are offline, the CLI
+starts normally without an update prompt. Model downloads are verified against pinned digests
+before they are used.
 
 ### Can I use models outside the catalog?
 
