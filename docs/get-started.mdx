@@ -14,7 +14,7 @@ Set up local models for me with the Magnitude CLI. Install it with `npm i -g @ma
 
 Your agent will profile your hardware, walk you through the best local models for it, download the ones you pick, and switch itself over to them.
 
-Magnitude supports macOS and Linux. Windows is supported through WSL.
+Magnitude supports macOS, Linux, and Windows 10 or later (x64).
 
 ## Browse the models directly
 
@@ -58,6 +58,27 @@ Interactive setup:
 
 Magnitude supports the Magnitude Harness, Pi, OpenCode, Hermes, OpenClaw, Codex, Claude Code, Oh My Pi, and Cline.
 
+## Run from a source checkout
+
+To run the CLI directly from a clone of the repository, install [Bun](https://bun.sh) and Git, then:
+
+```sh
+git clone https://github.com/magnitudedev/magnitude.git
+cd magnitude
+bun run install:local
+magnitude setup
+```
+
+`install:local` installs dependencies, generates the version file, and symlinks `magnitude` into `$BUN_INSTALL/bin` (or `~/.local/bin`). Pass `--bin-dir <dir>` to choose another directory, `--no-link` to prepare the checkout without touching your PATH, or `--uninstall` to remove the link.
+
+In this mode the Magnitude background service runs from the checkout. The inference engine is downloaded prebuilt from the GitHub release that matches the checked-out version. The installer verifies that release exists; if it does not, check out a release tag (`git checkout @magnitudedev/cli@<version>`) or build the engine yourself:
+
+```sh
+bun run install:local --build-inference
+```
+
+Building the engine requires a Rust toolchain, CMake, and a C++ compiler, and marks the checkout as a development build.
+
 ## Start working
 
 Follow any handoff instructions your agent gives you, then continue in your harness. Magnitude runs headlessly in the background, loads the model when your agent requests it, and manages memory and concurrency automatically.
@@ -70,10 +91,10 @@ You do not need to learn the Magnitude CLI. Your agent can inspect Magnitude and
 
 ## Windows
 
-On Windows, install WSL first:
+Magnitude runs natively on Windows 10 (version 1809 or later) and Windows 11, x64. Install Node.js or Bun, then follow the installation steps above from PowerShell or Windows Terminal.
 
-```powershell
-wsl --install
-```
+- The agent shell tool runs commands through a POSIX shell so its safety checks apply. Install [Git for Windows](https://gitforwindows.org), which provides Git Bash; Magnitude finds it automatically. You can also point `SHELL` at any bash executable.
+- The background service is registered as a Scheduled Task that starts at login. Use `magnitude service uninstall` to remove it.
+- Local inference uses the CPU by default, CUDA on NVIDIA GPUs, and Vulkan on other GPUs, chosen automatically during setup.
 
-Restart the computer, open WSL, then follow the installation steps above.
+WSL remains supported: run `wsl --install`, restart, open WSL, and follow the Linux instructions inside it.

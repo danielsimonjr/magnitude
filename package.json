@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "bootstrap": "bun scripts/bootstrap.ts",
+    "install:local": "bun run scripts/install-local.ts",
     "dev": "bun run scripts/dev.ts",
     "devl": "bun run dev:version && bun run dev:client:local",
     "dev:version": "bun run packages/version/scripts/generate-version.ts --dev",

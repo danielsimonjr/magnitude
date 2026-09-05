@@ -38,7 +38,7 @@ Set up local models for me with the Magnitude CLI. Install it with `npm i -g @ma
 
 Your agent will profile your hardware, walk you through the best local models for it, download the ones you pick, and switch itself over to them.
 
-Magnitude supports macOS and Linux. Windows is supported through WSL.
+Magnitude supports macOS, Linux, and Windows 10 or later (x64). On Windows the agent shell needs a POSIX shell: install [Git for Windows](https://gitforwindows.org), which provides Git Bash. WSL also works.
 
 <details>
 <summary>Want to browse the models directly?</summary>
@@ -49,6 +49,33 @@ magnitude setup
 ```
 
 The interactive setup lets you browse the recommended models and choose one yourself.
+
+</details>
+
+<details>
+<summary>Run from a source checkout</summary>
+
+You can run the CLI straight from a clone without installing the npm package. You need
+[Bun](https://bun.sh) and Git; macOS, Linux, and Windows 10 or later are supported (on Windows the
+installer writes a `magnitude.cmd` wrapper instead of a symlink).
+
+```sh
+git clone https://github.com/magnitudedev/magnitude.git
+cd magnitude
+bun run install:local
+magnitude setup
+```
+
+`install:local` installs dependencies, generates the version file, and symlinks `magnitude` into
+`$BUN_INSTALL/bin` (or `~/.local/bin`; pass `--bin-dir <dir>` to choose). In this mode the
+background service runs from the checkout, and the prebuilt inference engine matching the
+checked-out version is downloaded from GitHub releases on first use. The installer checks that such a
+release exists and, if not, tells you to check out a release tag (`git checkout @magnitudedev/cli@<version>`)
+or build the engine yourself.
+
+To compile the inference engine locally instead (requires a Rust toolchain, CMake, and a C++
+compiler), run `bun run install:local --build-inference`. Remove the link with
+`bun run install:local --uninstall`.
 
 </details>
 
