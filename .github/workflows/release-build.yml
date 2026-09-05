@@ -191,6 +191,14 @@ jobs:
             --output cuda-keyring.deb \
             "https://developer.download.nvidia.com/compute/cuda/repos/${repository_distribution}/${repository_arch}/cuda-keyring_1.1-1_all.deb"
           sudo dpkg -i cuda-keyring.deb
+          # The keyring is fetched over TLS only; pin the signing key it installs so a
+          # substituted package cannot authorize a different apt repository.
+          expected_fingerprint="EB693B3035CD5710E231E123A4B469963BF863CC"
+          actual_fingerprint="$(gpg --show-keys --with-colons /usr/share/keyrings/cuda-archive-keyring.gpg | awk -F: '$1 == "fpr" { print $10; exit }')"
+          if [ "$actual_fingerprint" != "$expected_fingerprint" ]; then
+            echo "::error::Unexpected CUDA repository signing key fingerprint: ${actual_fingerprint:-none}"
+            exit 1
+          fi
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             "cuda-compiler-${package_version}" \

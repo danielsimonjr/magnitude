@@ -99,8 +99,11 @@ jobs:
         shell: bash
         env:
           RELEASE_COMMIT: ${{ steps.source.outputs.commit }}
+          TARGET_BRANCH: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || github.ref_name }}
         run: |
-          test "${{ github.ref }}" = "refs/heads/main"
+          # pull_request events run on refs/pull/<n>/merge, so validate the target
+          # branch rather than the checkout ref.
+          test "$TARGET_BRANCH" = "main"
           [[ "$RELEASE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
           git fetch origin main
           git merge-base --is-ancestor "$RELEASE_COMMIT" origin/main
