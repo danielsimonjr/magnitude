@@ -4,6 +4,7 @@ import * as FileSystem from "@effect/platform/FileSystem"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Console, Data, Effect, Option } from "effect"
 import { releaseUrl } from "../src/acquisition"
+import { encodeReleasePins, RELEASE_PINS_FILENAME } from "../src/release-pins"
 import {
   buildLocalRelease,
   loadLocalRelease,
@@ -239,6 +240,29 @@ const program = Effect.gen(function* () {
   )
 
   const fs = yield* FileSystem.FileSystem
+  // Pin the launcher to this local release exactly as prepare-npm pins the
+  // published one, so the bootstrap exercises manifest verification (and a
+  // stale pins file from an earlier run cannot reject this release).
+  const manifestPath = release.files.get("magnitude-release.json")
+  if (manifestPath === undefined) {
+    return yield* failure("local release has no manifest")
+  }
+  const manifestBytes = yield* fs.readFile(manifestPath).pipe(
+    Effect.mapError((cause) =>
+      failure(`unable to read the local release manifest: ${String(cause)}`)
+    ),
+  )
+  yield* fs.writeFileString(
+    resolve(PROJECT_ROOT, "packages/launcher/bin", RELEASE_PINS_FILENAME),
+    encodeReleasePins({
+      version: release.version,
+      manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
+    }),
+  ).pipe(
+    Effect.mapError((cause) =>
+      failure(`unable to write the launcher release pins: ${String(cause)}`)
+    ),
+  )
   const home = yield* fs.makeTempDirectory({
     prefix: "magnitude-bootstrap-test-",
   }).pipe(

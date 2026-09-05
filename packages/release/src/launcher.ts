@@ -10,6 +10,7 @@ import {
   installArtifact,
   releaseBaseUrl,
   selectArtifact,
+  type AcquireReleaseOptions,
 } from "./acquisition"
 import { ArchiveExtractor } from "./archive"
 import { ReleaseAcquisitionError } from "./errors"
@@ -129,8 +130,19 @@ const publishPointer = (
     }),
   )
 
+export interface EnsureBinaryOptions {
+  /**
+   * The manifest digest pinned in the launcher's npm tarball
+   * (`bin/release-pins.json`); none for locally built launchers.
+   */
+  readonly expectedManifestSha256: AcquireReleaseOptions["expectedManifestSha256"]
+}
+
+const Unpinned: EnsureBinaryOptions = { expectedManifestSha256: Option.none() }
+
 export const ensureBinaryEffect = (
   version: string,
+  options: EnsureBinaryOptions = Unpinned,
 ): Effect.Effect<
   string,
   unknown,
@@ -150,6 +162,7 @@ export const ensureBinaryEffect = (
       releaseBaseUrl(),
       version,
       path.join(releaseRoot(), "manifests", version),
+      { expectedManifestSha256: options.expectedManifestSha256 },
     )
     const artifact = yield* selectArtifact(release.manifest, "cli", host)
     const destination = path.join(

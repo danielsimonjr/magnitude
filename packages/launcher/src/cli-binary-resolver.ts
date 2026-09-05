@@ -2,7 +2,7 @@ import * as CommandExecutor from "@effect/platform/CommandExecutor"
 import * as FileSystem from "@effect/platform/FileSystem"
 import * as HttpClient from "@effect/platform/HttpClient"
 import * as Path from "@effect/platform/Path"
-import { ArchiveExtractor } from "@magnitudedev/release"
+import { ArchiveExtractor, readLauncherReleasePins } from "@magnitudedev/release"
 import { ensureBinaryEffect } from "@magnitudedev/release/launcher"
 import { Brand, Context, Effect, Layer, Schema } from "effect"
 import {
@@ -53,7 +53,14 @@ export const cliBinaryResolverLayer: Layer.Layer<
 
   const resolve = Effect.gen(function* () {
     const installation = yield* inspector.inspect
-    const binary = yield* ensureBinaryEffect(installation.version).pipe(
+    // The pins ship in the same immutable tarball as this launcher, so they
+    // are the one thing a rewritten GitHub release asset cannot change.
+    const binary = yield* readLauncherReleasePins(
+      installation.root,
+      installation.version,
+    ).pipe(
+      Effect.flatMap((expectedManifestSha256) =>
+        ensureBinaryEffect(installation.version, { expectedManifestSha256 })),
       Effect.provide(context),
       Effect.mapError((error) => new CliBinaryUnavailable({
         reason: error instanceof Error ? error.message : String(error),

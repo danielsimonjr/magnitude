@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from "node:fs/promises"
+import { dirname, resolve } from "node:path"
 import {
   releaseUrl,
   validateReleaseManifestBytes,
@@ -28,4 +30,12 @@ if (
   release.manifest.sourceCommit !== sourceCommit
 ) {
   throw new Error("public release does not match the released source")
+}
+// The npm-only recovery path has no assembled candidate; the verified public
+// manifest is what prepare-npm pins in that case.
+const manifestOutput = process.env.MAGNITUDE_RELEASE_MANIFEST_OUTPUT?.trim()
+if (manifestOutput) {
+  const target = resolve(manifestOutput)
+  await mkdir(dirname(target), { recursive: true })
+  await writeFile(target, manifest)
 }

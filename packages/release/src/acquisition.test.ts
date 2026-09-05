@@ -150,6 +150,130 @@ describe("unsigned release acquisition", () => {
     }
   })
 
+  describe("launcher manifest pins", () => {
+    const serveManifest = (bytes: Uint8Array) => {
+      let requests = 0
+      const server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch: () => {
+          requests += 1
+          return new Response(new TextDecoder().decode(bytes))
+        },
+      })
+      return { server, requests: () => requests }
+    }
+
+    it("accepts a manifest whose digest matches the pin", async () => {
+      const root = await mkdtemp(join(tmpdir(), "magnitude-release-test-"))
+      const bytes = manifestBytes()
+      const { server } = serveManifest(bytes)
+      try {
+        const release = await Effect.runPromise(
+          acquireRelease(
+            `http://127.0.0.1:${server.port}`,
+            version,
+            join(root, "manifest"),
+            { expectedManifestSha256: Option.some(sha256(bytes)) },
+          ).pipe(Effect.provide(AcquisitionLayer)),
+        )
+        expect(release.manifestSha256).toBe(sha256(bytes))
+        expect(release.manifest.version).toBe(version)
+      } finally {
+        server.stop(true)
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+
+    it("rejects a structurally valid manifest whose digest differs from the pin", async () => {
+      const root = await mkdtemp(join(tmpdir(), "magnitude-release-test-"))
+      // Same version and tag, one artifact digest rewritten: exactly what a
+      // replaced GitHub release asset looks like.
+      const tampered = manifestBytes({
+        artifacts: [Schema.encodeSync(ReleaseArtifactSchema)({
+          ...artifact,
+          sha256: "b".repeat(64),
+        })],
+      })
+      const { server } = serveManifest(tampered)
+      try {
+        const error = await Effect.runPromise(
+          acquireRelease(
+            `http://127.0.0.1:${server.port}`,
+            version,
+            join(root, "manifest"),
+            { expectedManifestSha256: Option.some(sha256(manifestBytes())) },
+          ).pipe(
+            Effect.provide(AcquisitionLayer),
+            Effect.flip,
+          ),
+        )
+        expect(error._tag).toBe("ReleaseAcquisitionError")
+        expect(error.stage).toBe("validate")
+        expect(error.transient).toBe(false)
+        expect(error.message).toBe(
+          "release manifest differs from the digest pinned in the installed launcher",
+        )
+        // A rejected manifest must not be cached for a later launch to reuse.
+        await expect(readFile(join(root, "manifest", "magnitude-release.json")))
+          .rejects.toThrow()
+      } finally {
+        server.stop(true)
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+
+    it("refetches instead of trusting a cached manifest that no longer matches the pin", async () => {
+      const root = await mkdtemp(join(tmpdir(), "magnitude-release-test-"))
+      const stale = manifestBytes({
+        artifacts: [Schema.encodeSync(ReleaseArtifactSchema)({
+          ...artifact,
+          sha256: "c".repeat(64),
+        })],
+      })
+      const bytes = manifestBytes()
+      const { server, requests } = serveManifest(bytes)
+      try {
+        await mkdir(join(root, "manifest"), { recursive: true })
+        await writeFile(join(root, "manifest", "magnitude-release.json"), stale)
+        const release = await Effect.runPromise(
+          acquireRelease(
+            `http://127.0.0.1:${server.port}`,
+            version,
+            join(root, "manifest"),
+            { expectedManifestSha256: Option.some(sha256(bytes)) },
+          ).pipe(Effect.provide(AcquisitionLayer)),
+        )
+        expect(requests()).toBe(1)
+        expect(release.manifestSha256).toBe(sha256(bytes))
+      } finally {
+        server.stop(true)
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+
+    it("acquires without verification when no pin is supplied", async () => {
+      const root = await mkdtemp(join(tmpdir(), "magnitude-release-test-"))
+      const { server } = serveManifest(manifestBytes())
+      try {
+        for (const options of [undefined, { expectedManifestSha256: Option.none<string>() }]) {
+          const release = await Effect.runPromise(
+            acquireRelease(
+              `http://127.0.0.1:${server.port}`,
+              version,
+              join(root, "manifest"),
+              options,
+            ).pipe(Effect.provide(AcquisitionLayer)),
+          )
+          expect(release.manifest.version).toBe(version)
+        }
+      } finally {
+        server.stop(true)
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+  })
+
   it.each([
     ["digest", "corrupt", "downloaded artifact SHA-256"],
     ["size", "short", "artifact response declares 5 bytes, expected 7"],
