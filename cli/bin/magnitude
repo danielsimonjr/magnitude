@@ -1,0 +1,44 @@
+#!/usr/bin/env bun
+/**
+ * Runs the Magnitude CLI directly from a source checkout.
+ *
+ * `bun run scripts/install-local.ts` symlinks this file onto PATH. It always
+ * re-enters the checkout through `cli/src/index.tsx`, which is how the CLI
+ * recognises source mode: the background service is then launched from
+ * `packages/acn/src/binary.ts` instead of a downloaded release binary.
+ */
+import { existsSync } from "node:fs"
+import { resolve } from "node:path"
+
+// Bun resolves symlinks before evaluating, so import.meta.dir is the real checkout.
+const repoRoot = resolve(import.meta.dir, "..", "..")
+const entry = resolve(repoRoot, "cli", "src", "index.tsx")
+const versionFile = resolve(repoRoot, "packages", "version", "src", "version.generated.ts")
+const nodeModules = resolve(repoRoot, "node_modules")
+
+if (!existsSync(nodeModules) || !existsSync(versionFile)) {
+  console.error(
+    [
+      "This Magnitude checkout has not been prepared for running from source.",
+      `Run the installer once from the repository root:`,
+      "",
+      `  cd ${repoRoot}`,
+      "  bun run install:local",
+      "",
+    ].join("\n"),
+  )
+  process.exit(1)
+}
+
+const child = Bun.spawn(["bun", "run", entry, ...process.argv.slice(2)], {
+  cwd: process.cwd(),
+  env: process.env,
+  stdin: "inherit",
+  stdout: "inherit",
+  stderr: "inherit",
+})
+const forward = (signal: NodeJS.Signals) => () => child.kill(signal)
+process.on("SIGINT", forward("SIGINT"))
+process.on("SIGTERM", forward("SIGTERM"))
+process.on("SIGHUP", forward("SIGHUP"))
+process.exit(await child.exited)

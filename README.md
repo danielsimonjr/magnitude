@@ -52,6 +52,32 @@ The interactive setup lets you browse the recommended models and choose one your
 
 </details>
 
+<details>
+<summary>Run from a source checkout</summary>
+
+You can run the CLI straight from a clone without installing the npm package. You need
+[Bun](https://bun.sh) and Git; macOS, Linux, and WSL are supported.
+
+```sh
+git clone https://github.com/magnitudedev/magnitude.git
+cd magnitude
+bun run install:local
+magnitude setup
+```
+
+`install:local` installs dependencies, generates the version file, and symlinks `magnitude` into
+`$BUN_INSTALL/bin` (or `~/.local/bin`; pass `--bin-dir <dir>` to choose). In this mode the
+background service runs from the checkout, and the prebuilt inference engine matching the
+checked-out version is downloaded from GitHub releases on first use. The installer checks that such a
+release exists and, if not, tells you to check out a release tag (`git checkout @magnitudedev/cli@<version>`)
+or build the engine yourself.
+
+To compile the inference engine locally instead (requires a Rust toolchain, CMake, and a C++
+compiler), run `bun run install:local --build-inference`. Remove the link with
+`bun run install:local --uninstall`.
+
+</details>
+
 ## Why Magnitude?
 
 - **Free to run:** no token costs, API keys, or rate limits for local models
