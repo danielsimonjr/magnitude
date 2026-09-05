@@ -61,6 +61,9 @@ export interface HubRepositoryHttpOptions {
   token?: string
 }
 
+/** Options accepted by server-facing HF search/resolve helpers. */
+export type HuggingFaceHubOptions = HubRepositoryHttpOptions
+
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 export const retryableHubStatus = (status: number): boolean => status === 429 || status >= 500
@@ -212,19 +215,41 @@ export const refreshHuggingFaceRepository = async (
   return snapshot
 }
 
-/** Convenience wrappers used by icn-server routes. */
+const isHubRepositoryHttpClient = (
+  value: unknown,
+): value is HubRepositoryHttpClient =>
+  typeof value === "object" &&
+  value !== null &&
+  "fetchRepositoryMetadata" in value &&
+  typeof (value as HubRepositoryHttpClient).fetchRepositoryMetadata === "function"
+
+const resolveHubHttpClient = (
+  options: HuggingFaceHubOptions | HubRepositoryHttpClient = {},
+): HubRepositoryHttpClient =>
+  isHubRepositoryHttpClient(options) ? options : createHubRepositoryHttpClient(options)
+
+/** Convenience wrappers used by icn-server routes and injectable tests. */
 export const resolveHuggingFaceRepository = async (
   request: HuggingFaceRepositoryRequest,
-  deps?: Partial<RefreshHuggingFaceRepositoryDeps>,
-): Promise<HuggingFaceRepositorySnapshot> =>
-  refreshHuggingFaceRepository(
-    { http: deps?.http ?? createHubRepositoryHttpClient({ endpoint: deps?.endpoint }), ...deps },
+  options: HuggingFaceHubOptions | Partial<RefreshHuggingFaceRepositoryDeps> = {},
+): Promise<HuggingFaceRepositorySnapshot> => {
+  if (isHubRepositoryHttpClient(options)) {
+    return refreshHuggingFaceRepository({ http: options }, request)
+  }
+  const deps = options as HuggingFaceHubOptions & Partial<RefreshHuggingFaceRepositoryDeps>
+  return refreshHuggingFaceRepository(
+    {
+      http: deps.http ?? createHubRepositoryHttpClient(deps),
+      endpoint: deps.endpoint,
+      cache: deps.cache,
+    },
     request,
   )
+}
 
 export const searchHuggingFaceModels = async (
   request: { query: string; limit: number },
-  http: HubRepositoryHttpClient = createHubRepositoryHttpClient(),
+  options: HuggingFaceHubOptions | HubRepositoryHttpClient = {},
 ): Promise<{ models: NonNullable<ReturnType<typeof hubSearchModelToContract>>[] }> => {
   const query = request.query.trim()
   if (query.length === 0 || request.limit <= 0) {
@@ -232,6 +257,7 @@ export const searchHuggingFaceModels = async (
       message: "Hugging Face search requires a non-empty query and positive limit",
     })
   }
+  const http = resolveHubHttpClient(options)
   if (http.searchModels === undefined) {
     throw InventoryError.Unsupported({ message: "Hub HTTP client does not support search" })
   }

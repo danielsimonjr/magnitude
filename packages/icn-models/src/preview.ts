@@ -182,7 +182,12 @@ export const selectRepositorySnapshotComponents = (
   })
 }
 
-export { refreshHuggingFaceRepository } from "./catalog-resolve"
+export {
+  refreshHuggingFaceRepository,
+  resolveHuggingFaceRepository,
+  searchHuggingFaceModels,
+  type HuggingFaceHubOptions,
+} from "./catalog-resolve"
 
 export class ModelPreviewService {
   // Full preview orchestration depends on ManagedModelStore network paths; use hub helpers above in tests.

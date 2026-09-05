@@ -510,9 +510,9 @@ export const createServerServices = (options: ServerServicesOptions = {}): Serve
     async applyChatTemplate(request) {
       try {
         const engine = await import("@magnitudedev/icn-engine")
-        if (typeof engine.inspectTemplate === "function") {
+        if (typeof engine.inspectTemplateFromModel === "function") {
           try {
-            await engine.inspectTemplate()
+            await engine.inspectTemplateFromModel()
           } catch {
             // Native template inspection is not wired; fall back to minimal apply.
           }
