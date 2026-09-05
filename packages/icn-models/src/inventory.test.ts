@@ -17,6 +17,21 @@ describe("inventory", () => {
     expect(config.hf_cache_dirs).toEqual([])
   })
 
+  it("accepts Windows absolute store and cache roots", () => {
+    const config = InventoryConfig.withRoots(
+      "D:\\a\\magnitude\\magnitude\\model-store",
+      "D:\\a\\magnitude\\magnitude\\cache",
+    )
+    expect(config.root).toBe("D:\\a\\magnitude\\magnitude\\model-store")
+    expect(config.cache_root).toBe("D:\\a\\magnitude\\magnitude\\cache")
+  })
+
+  it("rejects relative store and cache roots", () => {
+    expect(() => InventoryConfig.withRoots("model-store", "/tmp/cache")).toThrow(
+      /must be absolute/,
+    )
+  })
+
   it("recognizes only complete split names", () => {
     expect(splitShardName("model-00001-of-00002.gguf")?.index).toBe(1)
     expect(splitShardName("model-1-of-2.gguf")).toBeUndefined()
