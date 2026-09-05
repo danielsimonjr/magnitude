@@ -10,7 +10,9 @@
   "dependencies": {
     "@magnitudedev/acn": "workspace:*",
     "@magnitudedev/agent": "workspace:*",
-    "@magnitudedev/acn-protocol": "workspace:*"
+    "@magnitudedev/acn-protocol": "workspace:*",
+    "@effect/platform-bun": "^0.90.0",
+    "effect": "^3.21.2"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.3",

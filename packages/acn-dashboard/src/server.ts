@@ -1,20 +1,21 @@
-import { readdir, readFile, rm } from 'node:fs/promises'
-import { dirname, join, resolve, sep } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
-import { Schema } from 'effect'
+import { BunFileSystem, BunPath } from '@effect/platform-bun'
+import { Effect, Layer, Option } from 'effect'
 import {
-  AcnVersionRegistryJson,
-  type AcnRegistration,
-} from '@magnitudedev/acn-protocol'
-import { acnRpcAuthorizationHeader, loadOrCreateAcnRpcToken } from '@magnitudedev/acn-protocol/coordination'
+  makeAcnOwnerStore,
+  type AcnOwnerRecord,
+  acnRpcAuthorizationHeader,
+  loadOrCreateAcnRpcToken,
+} from '@magnitudedev/acn-protocol/coordination'
+import { BunSqliteDriverLayer } from '@magnitudedev/acn-protocol/coordination/bun'
+import { ProcessGroupControllerLive } from '@magnitudedev/acn-protocol/coordination/exact-process'
 import type { AcnInfo, KillAllAcnResult, RpcTraceSummary } from './lib/types'
 
 const PORT = Number(process.env.ACN_DASH_API_PORT ?? 4886)
 const MOTEL_URL = process.env.MAGNITUDE_MOTEL_URL ?? 'http://127.0.0.1:27686'
 const DATA_DIR = join(homedir(), '.magnitude')
-const ACN_DIR = join(DATA_DIR, 'acn')
 const DIST_DIR = join(import.meta.dir, '..', 'dist')
-const decodeRegistry = Schema.decodeUnknownSync(AcnVersionRegistryJson)
 
 const UI_PORT = Number(process.env.ACN_DASH_UI_PORT ?? 4887)
 const ALLOWED_ORIGINS = new Set([`http://localhost:${UI_PORT}`, `http://127.0.0.1:${UI_PORT}`])
@@ -39,28 +40,32 @@ function json(body: unknown, init?: ResponseInit): Response {
   })
 }
 
-async function readRegistration(path: string): Promise<AcnRegistration | null> {
-  try {
-    const text = await readFile(path, 'utf8')
-    if (text.trim().length === 0) return null
-    const registration = decodeRegistry(text).registration
-    if (!LOOPBACK_URL.test(registration.url)) return null
-    return registration
-  } catch {
-    return null
-  }
+// The ACN coordination model records exactly one current owner (pid, exact process
+// identity, port) in the SQLite owner store under the data directory.
+const ownerStoreLayer = Layer.mergeAll(BunFileSystem.layer, BunPath.layer, BunSqliteDriverLayer)
+
+async function currentOwner(): Promise<AcnOwnerRecord | null> {
+  const owner = await Effect.runPromise(
+    makeAcnOwnerStore(DATA_DIR).pipe(
+      Effect.flatMap((store) => store.current),
+      Effect.provide(ownerStoreLayer),
+      Effect.catchAll(() => Effect.succeed(Option.none<AcnOwnerRecord>())),
+    ),
+  )
+  if (Option.isNone(owner)) return null
+  const url = ownerUrl(owner.value)
+  // The owner record is read from a user-writable database; only ever proxy to loopback.
+  if (!LOOPBACK_URL.test(url)) return null
+  return owner.value
 }
+
+const ownerUrl = (owner: AcnOwnerRecord): string => `http://127.0.0.1:${owner.port}`
 
 function isMissingProcess(error: unknown): boolean {
   return typeof error === 'object' &&
     error !== null &&
     'code' in error &&
-    Reflect.get(error, 'code') === 'ESRCH'
-}
-
-async function removeStaleRegistration(registryPath: string): Promise<void> {
-  await rm(registryPath, { force: true })
-  await rm(dirname(registryPath), { recursive: false }).catch(() => undefined)
+    (error as { code?: unknown }).code === 'ESRCH'
 }
 
 // Introspection routes require the daemon's RPC bearer token; the dashboard runs as the
@@ -145,10 +150,11 @@ async function listRpcTraces(): Promise<RpcTraceSummary[]> {
     .filter((trace): trace is RpcTraceSummary => trace !== null)
 }
 
-async function probeAcn(registration: AcnRegistration, registryPath: string): Promise<AcnInfo> {
+async function probeAcn(owner: AcnOwnerRecord): Promise<AcnInfo> {
+  const url = ownerUrl(owner)
   let health: AcnInfo['health']
   try {
-    const payload = await fetchJson(`${registration.url}/health`)
+    const payload = await fetchJson(`${url}/health`)
     const value = payload as {
       service?: string
       version?: string
@@ -171,7 +177,7 @@ async function probeAcn(registration: AcnRegistration, registryPath: string): Pr
 
   let introspection: AcnInfo['introspection']
   try {
-    await fetchJson(`${registration.url}/dev/introspection`)
+    await fetchJson(`${url}/dev/introspection`)
     introspection = { ok: true }
   } catch (error) {
     introspection = {
@@ -181,82 +187,59 @@ async function probeAcn(registration: AcnRegistration, registryPath: string): Pr
   }
 
   return {
-    version: registration.version,
-    registration,
-    registryPath,
+    // The owner store does not record a version; the daemon reports it on /health.
+    version: health.version ?? `pid-${owner.pid}`,
+    owner,
+    url,
     health,
     introspection,
   }
 }
 
 async function listAcns(): Promise<AcnInfo[]> {
-  const registrations = await listRegistrations()
-
-  const infos = await Promise.all(
-    registrations.map(({ registration, registryPath }) => probeAcn(registration, registryPath)),
-  )
-  return infos.sort((a, b) => b.registration.timestamp - a.registration.timestamp)
+  const owner = await currentOwner()
+  if (owner === null) return []
+  return [await probeAcn(owner)]
 }
 
-async function listRegistrations(): Promise<Array<{ registration: AcnRegistration; registryPath: string }>> {
-  let entries: string[] = []
-  try {
-    entries = await readdir(ACN_DIR)
-  } catch {
-    return []
-  }
-
-  const registrations: Array<{ registration: AcnRegistration; registryPath: string }> = []
-  for (const entry of entries) {
-    const registryPath = join(ACN_DIR, entry, 'registry.json')
-    const registration = await readRegistration(registryPath)
-    if (registration) registrations.push({ registration, registryPath })
-  }
-
-  return registrations
+// Confirms the recorded pid is still occupied by the exact recorded process occurrence
+// (not a reused pid) before signalling it.
+async function ownerIsAlive(owner: AcnOwnerRecord): Promise<boolean> {
+  const observed = await Effect.runPromise(
+    ProcessGroupControllerLive.inspect(owner.pid).pipe(
+      Effect.catchAll(() => Effect.succeed(Option.none())),
+    ),
+  )
+  return Option.isSome(observed) && observed.value.processStartIdentity === owner.processStartIdentity
 }
 
 async function killAllAcns(): Promise<KillAllAcnResult[]> {
-  const registrations = await listRegistrations()
-  const results: KillAllAcnResult[] = []
+  const owner = await currentOwner()
+  if (owner === null) return []
+  const version = (await probeAcn(owner)).version
 
-  for (const { registration, registryPath } of registrations) {
-    if (registration.pid === process.pid) {
-      results.push({
-        version: registration.version,
-        pid: registration.pid,
-        status: 'skipped_self',
-      })
-      continue
-    }
-
-    try {
-      process.kill(registration.pid, 'SIGTERM')
-      results.push({
-        version: registration.version,
-        pid: registration.pid,
-        status: 'killed',
-      })
-    } catch (error) {
-      if (isMissingProcess(error)) {
-        await removeStaleRegistration(registryPath)
-        results.push({
-          version: registration.version,
-          pid: registration.pid,
-          status: 'stale',
-        })
-      } else {
-        results.push({
-          version: registration.version,
-          pid: registration.pid,
-          status: 'failed',
-          error: error instanceof Error ? error.message : String(error),
-        })
-      }
-    }
+  if (owner.pid === process.pid) {
+    return [{ version, pid: owner.pid, status: 'skipped_self' }]
   }
 
-  return results
+  if (!(await ownerIsAlive(owner))) {
+    return [{ version, pid: owner.pid, status: 'stale' }]
+  }
+
+  try {
+    process.kill(owner.pid, 'SIGTERM')
+    return [{ version, pid: owner.pid, status: 'killed' }]
+  } catch (error) {
+    if (isMissingProcess(error)) {
+      return [{ version, pid: owner.pid, status: 'stale' }]
+    }
+    return [{
+      version,
+      pid: owner.pid,
+      status: 'failed',
+      error: error instanceof Error ? error.message : String(error),
+    }]
+  }
 }
 
 async function findAcn(version: string): Promise<AcnInfo | null> {
@@ -265,7 +248,7 @@ async function findAcn(version: string): Promise<AcnInfo | null> {
 }
 
 function upstreamUrl(acn: AcnInfo, suffix: string): string {
-  return `${acn.registration.url}${suffix}`
+  return `${acn.url}${suffix}`
 }
 
 async function proxyJson(version: string, suffix: string): Promise<Response> {
