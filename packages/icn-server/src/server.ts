@@ -1,3 +1,4 @@
+import { Worker } from "node:worker_threads"
 import { emitProgressLine, emitReadyLine, writeBootstrapLine } from "./bootstrap.js"
 import { nativeBuild, PACKAGE_VERSION } from "./build-identity.js"
 import type { ServeConfig, ServerIdentity } from "./config.js"
@@ -17,17 +18,45 @@ export interface RunningServer {
   stop(): Promise<void>
 }
 
-const installStdinEofGuard = (): (() => void) | undefined => {
-  if (!process.stdin.readable) return undefined
-  const onReadable = () => {
-    const chunk = process.stdin.read()
-    if (chunk === null) {
-      process.exit(0)
-    }
+/**
+ * Exit when the managed parent closes the private stdin pipe.
+ * Bun's Node-compat `readable`/`read()===null` does not observe pipe EOF, and
+ * draining `Bun.stdin.stream()` on the main thread can starve startup. Bun
+ * `--compile` also does not embed `new Worker(new URL(...))` modules, so the
+ * guard is an eval worker with an inlined blocking read on fd 0.
+ */
+const STDIN_EOF_WORKER_SOURCE = `
+const { readSync } = require("node:fs");
+const { parentPort } = require("node:worker_threads");
+const buffer = Buffer.alloc(1);
+try {
+  for (;;) {
+    const bytesRead = readSync(0, buffer, 0, 1, null);
+    if (bytesRead === 0) break;
   }
-  process.stdin.on("readable", onReadable)
+} catch {
+  // Closed or unreadable stdin is treated as parent loss.
+}
+parentPort.postMessage("eof");
+`
+
+const installStdinEofGuard = (): (() => void) => {
+  let active = true
+  const worker = new Worker(STDIN_EOF_WORKER_SOURCE, { eval: true })
+  const exit = () => {
+    if (!active) return
+    active = false
+    process.exit(0)
+  }
+  worker.on("message", exit)
+  // Do not exit on worker launch errors — that would kill a healthy server if
+  // the runtime cannot spawn threads; pipe EOF is the only shutdown signal.
+  worker.on("error", (error) => {
+    console.error("stdin EOF guard worker error:", error)
+  })
   return () => {
-    process.stdin.off("readable", onReadable)
+    active = false
+    void worker.terminate()
   }
 }
 
